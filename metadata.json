@@ -1,0 +1,6 @@
+{
+  "name": "DepotPro CI",
+  "description": "Logiciel professionnel de gestion de dépôt de boissons en Côte d'Ivoire : stocks, conditionnements, POS, consignes, caisse et rapports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
