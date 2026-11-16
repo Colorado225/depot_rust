@@ -28,8 +28,10 @@ pub enum AppError {
     #[error("Erreur de base de données : {0}")]
     Database(#[from] sqlx::Error),
 
+    // LOT 10 : plus de sqlx::migrate!. Le runner Rust applique lui-même les
+    // fichiers SQL dans schema_migrations avec somme de contrôle SHA-256.
     #[error("Migration SQLite échouée : {0}")]
-    Migration(#[from] sqlx::migrate::MigrateError),
+    Migration(String),
 
     #[error("Accès refusé : {0}")]
     PermissionDenied(String),

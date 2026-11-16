@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Fenêtre principale : permissions natives minimales. Aucun plugin réseau, aucun accès à un service distant. Le backend métier est joint sur le bouclage local via la CSP connect-src.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

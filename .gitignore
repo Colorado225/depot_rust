@@ -8,3 +8,11 @@ coverage/
 !.env.example
 data/
 src-tauri/target/
+# LOT 10 — artefacts historiques du sidecar Node (retirés du bundle, ignorés si régénérés)
+build-backend/
+src-tauri/binaries/
+src-tauri/gen/
+
+# Outils de validation Python (scripts/check_rust.py, scripts/make-icons.py)
+__pycache__/
+*.py[cod]

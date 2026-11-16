@@ -1,4 +1,7 @@
+import { invoke as tauriInvoke, isTauri } from '@tauri-apps/api/core';
 import { AppErrorPayload, ClientAppError } from '../types/errors';
+import type { BackupHistoryEntry } from '../types/backup';
+import { RUST_COMMAND_SET, RUST_PARITY } from './rustCommands.generated';
 
 const SESSION_TOKEN_STORAGE_KEY = 'depotpro_session_token';
 
@@ -16,20 +19,30 @@ export function setStoredSessionToken(token: string | null): void {
   }
 }
 
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: {
-      invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-    };
-  }
+/** Détection officielle Tauri 2 (flag injecté par la coquille, pas par le web). */
+export function isTauriDesktop(): boolean {
+  return isTauri();
 }
 
-export function isTauriDesktop(): boolean {
-  return typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__?.invoke);
+/**
+ * LOT 10 — 95/95 : le desktop n'utilise PLUS d'origine HTTP locale.
+ *
+ * `COMMAND_HTTP_MAP` et les trois helpers de fichiers gardent un chemin HTTP
+ * relatif UNIQUEMENT pour le navigateur / preview web (Express + Vite), qui
+ * reste la référence fonctionnelle. En Tauri, `invokeBackend` appelle toujours
+ * une commande Rust et les fichiers passent par `invokeRustService`.
+ */
+export async function getBackendOrigin(): Promise<string> {
+  return '';
+}
+
+/** Conservé pour la compatibilité des tests de transport (plus de cache). */
+export function resetBackendOriginCache(): void {
+  // Aucun état : l'origine desktop est définitivement vide.
 }
 
 interface HttpMapping {
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   url: string | ((payload?: Record<string, unknown>) => string);
   omitKeysFromBody?: string[];
 }
@@ -404,7 +417,79 @@ const COMMAND_HTTP_MAP: Record<string, HttpMapping> = {
       return qs ? `/api/reports/daily?${qs}` : '/api/reports/daily';
     },
   },
+
+  // LOT 9 Sauvegardes, Restauration & Fiabilisation
+  backup_overview: { method: 'GET', url: '/api/system/backups/overview' },
+  backup_config_update: { method: 'PUT', url: '/api/system/backups/config' },
+  backup_create: { method: 'POST', url: '/api/system/backups' },
+  backup_auto_run: { method: 'POST', url: '/api/system/backups/auto/run' },
+  backup_diagnostics: { method: 'GET', url: '/api/system/backups/diagnostics' },
+  backup_self_test: { method: 'POST', url: '/api/system/backups/self-test' },
+  backup_cancel_restore: { method: 'DELETE', url: '/api/system/backups/restore/pending' },
+  backup_verify: {
+    method: 'POST',
+    url: (p) => `/api/system/backups/${String(p?.id)}/verify`,
+    omitKeysFromBody: ['id'],
+  },
+  backup_restore: {
+    method: 'POST',
+    url: (p) => `/api/system/backups/${String(p?.id)}/restore`,
+    omitKeysFromBody: ['id'],
+  },
 };
+
+/** Appelle une commande de service Rust (fichiers binaires, diagnostic). */
+async function invokeRustService<T>(
+  command: string,
+  payload: Record<string, unknown>
+): Promise<T> {
+  const token = getStoredSessionToken();
+  const input: Record<string, unknown> = { ...payload };
+  if (token) input.token = token;
+  try {
+    return await tauriInvoke<T>(command, { input });
+  } catch (rawErr) {
+    throw parseRustError(rawErr);
+  }
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
+  return new Blob([bytes.buffer as ArrayBuffer], { type: mimeType });
+}
+
+function saveBlob(blob: Blob, filename: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 export async function downloadReportExport(opts: {
   format: 'csv' | 'pdf';
@@ -412,12 +497,26 @@ export async function downloadReportExport(opts: {
   startDate?: string;
   endDate?: string;
 }): Promise<string> {
+  if (isTauriDesktop()) {
+    const payload: Record<string, unknown> = { format: opts.format, dataset: opts.dataset };
+    if (opts.startDate) payload.startDate = opts.startDate;
+    if (opts.endDate) payload.endDate = opts.endDate;
+    const file = await invokeRustService<{
+      filename: string;
+      mimeType: string;
+      contentBase64: string;
+    }>('reports_export_file', payload);
+    saveBlob(bytesToBlob(base64ToBytes(file.contentBase64), file.mimeType), file.filename);
+    return file.filename;
+  }
+
   const token = getStoredSessionToken();
   const params = new URLSearchParams({ dataset: opts.dataset });
   if (opts.startDate) params.set('startDate', opts.startDate);
   if (opts.endDate) params.set('endDate', opts.endDate);
 
-  const response = await fetch(`/api/reports/export/${opts.format}?${params.toString()}`, {
+  const origin = await getBackendOrigin();
+  const response = await fetch(`${origin}/api/reports/export/${opts.format}?${params.toString()}`, {
     method: 'GET',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -435,17 +534,141 @@ export async function downloadReportExport(opts: {
   const disposition = response.headers.get('content-disposition') ?? '';
   const match = disposition.match(/filename="([^"]+)"/);
   const filename = match?.[1] ?? `depotpro-${opts.dataset}.${opts.format}`;
-
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(objectUrl);
-
+  saveBlob(blob, filename);
   return filename;
+}
+
+/** LOT 9 — Télécharge une sauvegarde .db vérifiée (Tauri IPC ou preview web). */
+export async function downloadBackupFile(backupId: string): Promise<string> {
+  if (isTauriDesktop()) {
+    const file = await invokeRustService<{
+      fileName: string;
+      mimeType: string;
+      contentBase64: string;
+    }>('backup_download_file', { id: backupId });
+    saveBlob(bytesToBlob(base64ToBytes(file.contentBase64), file.mimeType), file.fileName);
+    return file.fileName;
+  }
+
+  const token = getStoredSessionToken();
+  const origin = await getBackendOrigin();
+  const response = await fetch(`${origin}/api/system/backups/${encodeURIComponent(backupId)}/download`, {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    throw new ClientAppError(
+      errBody && typeof errBody === 'object' && 'code' in errBody && 'message' in errBody
+        ? (errBody as AppErrorPayload)
+        : { code: 'INTERNAL_ERROR', message: `Échec du téléchargement HTTP ${response.status}` }
+    );
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match?.[1] ?? `depotpro-sauvegarde-${backupId}.db`;
+  saveBlob(blob, filename);
+  return filename;
+}
+
+/**
+ * LOT 9 — Importe un fichier .db depuis une clé USB / un autre poste.
+ * En Tauri, les octets sont transmis en base64 à la commande Rust ; le
+ * SHA-256 calculé dans la webview est revérifié côté Rust avant écriture.
+ */
+export async function importBackupFile(file: File): Promise<BackupHistoryEntry> {
+  if (isTauriDesktop()) {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let sourceChecksum: string | undefined;
+    try {
+      if (globalThis.crypto?.subtle) sourceChecksum = await sha256Hex(buffer);
+    } catch {
+      // Environnement sans WebCrypto : Rust revérifie seul l'intégrité.
+    }
+    const payload: Record<string, unknown> = {
+      originalName: file.name,
+      contentBase64: bytesToBase64(bytes),
+    };
+    if (sourceChecksum) payload.sourceChecksum = sourceChecksum;
+    return invokeRustService<BackupHistoryEntry>('backup_import_file', payload);
+  }
+
+  const token = getStoredSessionToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/octet-stream',
+    // Les en-têtes HTTP doivent rester en caractères latin1.
+    'X-DepotPro-Filename': file.name.replace(/[^\x20-\x7e]/g, '_').slice(0, 120),
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  try {
+    if (globalThis.crypto?.subtle) {
+      const hex = await sha256Hex(await file.arrayBuffer());
+      headers['X-DepotPro-Source-Checksum'] = hex;
+    }
+  } catch {
+    // Environnement sans WebCrypto : le backend revérifie seul l'intégrité.
+  }
+
+  const origin = await getBackendOrigin();
+  const response = await fetch(`${origin}/api/system/backups/import`, {
+    method: 'POST',
+    headers,
+    body: file,
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ClientAppError(
+      data && typeof data === 'object' && 'code' in data && 'message' in data
+        ? (data as AppErrorPayload)
+        : { code: 'INTERNAL_ERROR', message: `Échec de l'import HTTP ${response.status}` }
+    );
+  }
+  return data as BackupHistoryEntry;
+}
+
+export type RustParityMode = 'transitional' | 'strict';
+let rustParityMode: RustParityMode = 'strict';
+
+/** Mode strict (défaut) = aucun repli HTTP n'est toléré en Tauri. */
+export function setRustParityMode(mode: RustParityMode): void {
+  rustParityMode = mode;
+}
+
+export function getRustParityMode(): RustParityMode {
+  return rustParityMode;
+}
+
+/** Avancement du port, affichable dans les diagnostics de livraison. */
+export function getRustParity(): { total: number; implemented: number; complete: boolean } {
+  return { ...RUST_PARITY };
+}
+
+/** Convertit une erreur renvoyée par un handler Rust en ClientAppError. */
+function parseRustError(rawErr: unknown): ClientAppError {
+  if (typeof rawErr === 'string') {
+    try {
+      const parsed = JSON.parse(rawErr) as AppErrorPayload;
+      if (parsed?.code && parsed?.message) {
+        return new ClientAppError(parsed);
+      }
+    } catch {
+      // Message Rust non structuré : on le transmet tel quel.
+    }
+    return new ClientAppError({ code: 'INTERNAL_ERROR', message: rawErr });
+  }
+  if (rawErr && typeof rawErr === 'object' && 'code' in rawErr && 'message' in rawErr) {
+    return new ClientAppError(rawErr as AppErrorPayload);
+  }
+  return new ClientAppError({
+    code: 'INTERNAL_ERROR',
+    message: rawErr instanceof Error ? rawErr.message : String(rawErr),
+  });
 }
 
 export async function invokeBackend<T>(
@@ -454,28 +677,28 @@ export async function invokeBackend<T>(
 ): Promise<T> {
   const token = getStoredSessionToken();
 
-  if (isTauriDesktop() && window.__TAURI_INTERNALS__) {
+  // LOT 10 — Architecture cible : la logique critique est exécutée en Rust.
+  // Le payload est transmis tel quel (camelCase) dans l'argument `input`,
+  // avec le jeton de session que les services Rust vérifient avant toute
+  // lecture ou écriture métier.
+  if (isTauriDesktop() && RUST_COMMAND_SET.has(command)) {
+    const input: Record<string, unknown> = { ...(payload ?? {}) };
+    if (token) input.token = token;
     try {
-      return await window.__TAURI_INTERNALS__.invoke<T>(command, {
-        ...(payload ?? {}),
-        ...(token ? { token } : {}),
-      });
+      return await tauriInvoke<T>(command, { input });
     } catch (rawErr) {
-      if (typeof rawErr === 'string') {
-        try {
-          const parsed = JSON.parse(rawErr) as AppErrorPayload;
-          if (parsed?.code && parsed?.message) {
-            throw new ClientAppError(parsed);
-          }
-        } catch (inner) {
-          if (inner instanceof ClientAppError) throw inner;
-        }
-      }
-      throw new ClientAppError({
-        code: 'INTERNAL_ERROR',
-        message: rawErr instanceof Error ? rawErr.message : String(rawErr),
-      });
+      throw parseRustError(rawErr);
     }
+  }
+
+  // LOT 10 — 95/95 : le pont HTTP local est retiré de la coquille Tauri.
+  // Aucun mode « transitional » ne peut le réactiver ; le chemin HTTP ci-dessous
+  // est réservé au navigateur / preview web de référence.
+  if (isTauriDesktop()) {
+    throw new ClientAppError({
+      code: 'NOT_IMPLEMENTED_IN_RUST',
+      message: `Commande « ${command} » absente du registre Rust (${RUST_PARITY.implemented}/${RUST_PARITY.total}). Le pont HTTP desktop a été retiré.`,
+    });
   }
 
   const mapping = COMMAND_HTTP_MAP[command];
@@ -487,6 +710,7 @@ export async function invokeBackend<T>(
   }
 
   const targetUrl = typeof mapping.url === 'function' ? mapping.url(payload) : mapping.url;
+  const origin = await getBackendOrigin();
   const headers: Record<string, string> = {};
   if (token) {
     headers.Authorization = `Bearer ${token}`;
@@ -504,7 +728,7 @@ export async function invokeBackend<T>(
     body = JSON.stringify(cleanBody);
   }
 
-  const response = await fetch(targetUrl, {
+  const response = await fetch(`${origin}${targetUrl}`, {
     method: mapping.method,
     headers,
     body,

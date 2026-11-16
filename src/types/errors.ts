@@ -5,7 +5,9 @@ export type ErrorCode =
   | 'INSUFFICIENT_STOCK'
   | 'CONFLICT'
   | 'NOT_FOUND'
-  | 'INTERNAL_ERROR';
+  | 'INTERNAL_ERROR'
+  // LOT 10 : 95/95, garde-fou contre tout retour du pont HTTP desktop.
+  | 'NOT_IMPLEMENTED_IN_RUST';
 
 export interface AppErrorPayload {
   code: ErrorCode;

@@ -68,7 +68,7 @@ pub async fn fetch_system_health(pool: &SqlitePool, db_path: &Path) -> Result<Sy
     let sqlite_version: (String,) = sqlx::query_as("SELECT sqlite_version();").fetch_one(pool).await?;
     let journal_mode: (String,) = sqlx::query_as("PRAGMA journal_mode;").fetch_one(pool).await?;
     let fk_enabled: (i64,) = sqlx::query_as("PRAGMA foreign_keys;").fetch_one(pool).await?;
-    let migrations_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _sqlx_migrations;")
+    let migrations_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM schema_migrations;")
         .fetch_one(pool)
         .await
         .unwrap_or((0,));

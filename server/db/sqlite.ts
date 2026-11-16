@@ -3,21 +3,35 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../error.ts';
+import { type AppliedRestoreInfo, applyPendingRestore } from './pendingRestore.ts';
 
 export interface SqliteConnectionResult {
   db: DatabaseSync;
   dbPath: string;
   migrationsAppliedNow: number;
+  /** Renseigné uniquement lorsqu'une restauration LOT 9 vient d'être activée au démarrage. */
+  restoreApplied: AppliedRestoreInfo | null;
 }
 
 export function initLocalSqlite(
-  dbFilePath = path.resolve(process.cwd(), 'data', 'depotpro.db'),
-  migrationsDir = path.resolve(process.cwd(), 'migrations')
+  // LOT 10 : la coquille Rust peut fournir un dossier de données explicite.
+  // Le serveur Node reste la référence web/preview, jamais un sidecar desktop.
+  // La coquille Tauri fournit ces chemins via variables d'environnement ;
+  // les valeurs par défaut restent celles du serveur de développement.
+  dbFilePath = process.env.DEPOTPRO_DATA_DIR
+    ? path.join(process.env.DEPOTPRO_DATA_DIR, 'depotpro.db')
+    : path.resolve(process.cwd(), 'data', 'depotpro.db'),
+  migrationsDir = process.env.DEPOTPRO_MIGRATIONS_DIR ??
+    path.resolve(process.cwd(), 'migrations')
 ): SqliteConnectionResult {
   const dir = path.dirname(dbFilePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
+
+  // LOT 9 : une restauration préparée est activée AVANT toute ouverture de la
+  // connexion applicative. Sans marqueur, cette étape est sans effet.
+  const restoreApplied = applyPendingRestore(dbFilePath);
 
   const db = new DatabaseSync(dbFilePath);
 
@@ -101,5 +115,6 @@ export function initLocalSqlite(
     db,
     dbPath: dbFilePath,
     migrationsAppliedNow,
+    restoreApplied,
   };
 }

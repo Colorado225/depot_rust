@@ -19,7 +19,7 @@ interface LotItem {
   lot: string;
   title: string;
   criterion: string;
-  status: 'Terminé et vérifié' | 'Non commencé';
+  status: 'Terminé et vérifié' | 'En cours de validation' | 'Non commencé';
 }
 
 const EXECUTION_LOTS: LotItem[] = [
@@ -80,14 +80,14 @@ const EXECUTION_LOTS: LotItem[] = [
   {
     lot: 'LOT 9',
     title: 'Fiabilisation',
-    criterion: 'Sauvegardes WAL, restauration vérifiée, non-régression.',
-    status: 'Non commencé',
+    criterion: 'Sauvegardes WAL, restauration vérifiée sur base séparée, portabilité USB, sécurité, performance, non-régression.',
+    status: 'Terminé et vérifié',
   },
   {
     lot: 'LOT 10',
     title: 'Distribution Desktop',
-    criterion: 'Installateurs Windows (MSI/EXE) et macOS (DMG/APP) signés et testés.',
-    status: 'Non commencé',
+    criterion: 'Port Rust natif 95/95 : tranches 1-4 intégrées, pont HTTP et sidecar retirés, sauvegardes/exports en Rust, registre et SQL vérifiés ; cargo check/test, builds natifs, signature, notarisation et installateurs validés restent à exécuter.',
+    status: 'En cours de validation',
   },
 ];
 
@@ -216,6 +216,11 @@ export function LotRoadmapVerificationView() {
                     {item.status === 'Terminé et vérifié' ? (
                       <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
                         <CheckCircle2 className="h-3.5 w-3.5" />
+                        {item.status}
+                      </span>
+                    ) : item.status === 'En cours de validation' ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+                        <Clock className="h-3.5 w-3.5" />
                         {item.status}
                       </span>
                     ) : (

@@ -2,14 +2,10 @@ use crate::repositories::system_repo::{
     activate_local_license, fetch_decisions, fetch_license_state, fetch_system_health,
     run_integrity_check, ArchitectureDecision, LicenseState, SystemHealth, UpdateLicenseInput,
 };
-use sqlx::SqlitePool;
-use std::path::PathBuf;
 use tauri::State;
 
-pub struct AppState {
-    pub pool: SqlitePool,
-    pub db_path: PathBuf,
-}
+// LOT 10 : l'état applicatif est centralisé dans db/mod.rs.
+pub use crate::db::AppState;
 
 #[tauri::command]
 pub async fn check_system_health(state: State<'_, AppState>) -> Result<SystemHealth, String> {
