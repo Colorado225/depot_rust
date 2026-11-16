@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { AppError } from '../error.ts';
 import { AuthRepository } from '../repositories/authRepo.ts';
+import { hashSessionToken } from '../security/password.ts';
 import {
   type AuthenticatedRequest,
   extractBearerToken,
@@ -123,10 +124,14 @@ export function createAuthRouter(authRepo: AuthRepository): Router {
           400
         );
       }
+      // LOT 11 — la session courante est conservée (le mot de passe actuel vient
+      // d'être prouvé), toutes les autres sont révoquées par le dépôt.
+      const currentToken = extractBearerToken(req);
       authRepo.changePassword(
         req.authUser!.id,
         parsed.data.currentPassword,
-        parsed.data.newPassword
+        parsed.data.newPassword,
+        currentToken ? hashSessionToken(currentToken) : null
       );
       res.json({ ok: true });
     } catch (err) {

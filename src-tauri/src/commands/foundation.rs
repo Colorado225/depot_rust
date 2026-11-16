@@ -117,7 +117,10 @@ pub async fn auth_me(state: State<'_, AppState>, input: Json) -> Result<Json, St
 #[tauri::command]
 pub async fn auth_change_password(state: State<'_, AppState>, input: Json) -> Result<Json, String> {
     let user = authenticated(&state.pool, &input).await?;
-    repo::change_password(&state.pool, &user.id, &input)
+    // LOT 11 — le jeton courant est transmis pour conserver SA session ; toutes
+    // les autres sessions de ce compte sont révoquées par le dépôt.
+    let keep_token = json::opt_str(&input, "token");
+    repo::change_password(&state.pool, &user.id, keep_token.as_deref(), &input)
         .await
         .map_err(fail)
 }

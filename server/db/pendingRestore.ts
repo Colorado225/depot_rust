@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../error.ts';
+import { ensurePrivateDir, restrictFile } from '../security/fsGuard.ts';
+import { sealRestoreMarker, verifyRestoreMarkerSeal } from '../security/localSeal.ts';
 
 /**
  * LOT 9 — Restauration différée au redémarrage.
@@ -26,6 +28,11 @@ export interface PendingRestore {
   requestedByUserId: string | null;
   confirmation: string;
   createdAt: string;
+  /**
+   * LOT 11 — Sceau HMAC-SHA256 du marqueur (clé locale hors base).
+   * Absent = marqueur non écrit par cette installation → restauration refusée.
+   */
+  seal?: string;
 }
 
 export interface AppliedRestoreInfo {
@@ -152,12 +159,26 @@ export function writePendingRestore(dbFilePath: string, pending: PendingRestore)
   if (pending.confirmation !== RESTORE_CONFIRMATION) {
     throw new AppError('VALIDATION_ERROR', 'Confirmation de restauration invalide.', 400);
   }
-  fs.mkdirSync(path.dirname(dbFilePath), { recursive: true });
+  ensurePrivateDir(path.dirname(path.resolve(dbFilePath)));
   const marker = pendingRestoreMarkerPath(dbFilePath);
-  fs.writeFileSync(marker, `${JSON.stringify(pending, null, 2)}\n`, {
+  // LOT 11 — le marqueur est scellé AVANT écriture : un utilisateur qui accède
+  // aux fichiers ne peut plus le forger pour déclencher une restauration.
+  const sealed: PendingRestore = {
+    ...pending,
+    seal: sealRestoreMarker(dbFilePath, {
+      version: pending.version,
+      backupId: pending.backupId,
+      stagedPath: pending.stagedPath,
+      stagedChecksum: pending.stagedChecksum,
+      confirmation: pending.confirmation,
+      requestedByUserId: pending.requestedByUserId,
+    }),
+  };
+  fs.writeFileSync(marker, `${JSON.stringify(sealed, null, 2)}\n`, {
     encoding: 'utf8',
     mode: 0o600,
   });
+  restrictFile(marker);
 }
 
 export function readPendingRestore(dbFilePath: string): PendingRestore | null {
@@ -189,9 +210,36 @@ export function readPendingRestore(dbFilePath: string): PendingRestore | null {
       500
     );
   }
+
+  // LOT 11 — contrôle du sceau AVANT toute autre étape. Un marqueur forgé à la
+  // main est refusé, la base courante reste intacte et le fichier est laissé en
+  // place pour diagnostic (comme pour un marqueur illisible).
+  const sealCheck = verifyRestoreMarkerSeal(
+    dbFilePath,
+    {
+      version: p.version,
+      backupId: p.backupId,
+      stagedPath: p.stagedPath,
+      stagedChecksum: p.stagedChecksum,
+      confirmation: p.confirmation,
+      requestedByUserId: p.requestedByUserId ?? null,
+    },
+    p.seal
+  );
+  if (!sealCheck.ok) {
+    throw new AppError(
+      'DATABASE_ERROR',
+      `Restauration refusée : ${sealCheck.reason} Aucune base n'a été remplacée. Supprimez ${marker} pour démarrer normalement.`,
+      500
+    );
+  }
   return p as PendingRestore;
 }
 
+/**
+ * LOT 11 — Annulation tracée : le sceau est vérifié d'abord, ce qui permet de
+ * journaliser un identifiant de sauvegarde fiable, puis le marqueur est retiré.
+ */
 export function cancelPendingRestore(dbFilePath: string): boolean {
   const marker = pendingRestoreMarkerPath(dbFilePath);
   if (!fs.existsSync(marker)) return false;

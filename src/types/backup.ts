@@ -2,7 +2,12 @@
 
 export type BackupType = 'MANUAL' | 'AUTO' | 'USB_EXPORT' | 'PRE_RESTORE';
 export type BackupOrigin = 'LOCAL' | 'IMPORTED';
-export type ManifestStatus = 'OK' | 'ABSENT' | 'MISMATCH' | 'UNREADABLE';
+/**
+ * LOT 11 — `UNSEALED` : manifeste v1 d'avant le scellement HMAC. Il reste
+ * lisible pour diagnostic mais ne suffit plus à autoriser un téléchargement ou
+ * une restauration : la sauvegarde doit être recréée (données intactes).
+ */
+export type ManifestStatus = 'OK' | 'ABSENT' | 'MISMATCH' | 'UNREADABLE' | 'UNSEALED';
 
 export const BACKUP_TYPE_LABELS: Record<BackupType, string> = {
   MANUAL: 'Manuelle',
@@ -73,6 +78,8 @@ export interface BackupOverview {
   lastRestoreAt: string | null;
   config: BackupConfig;
   pendingRestore: PendingRestore | null;
+  /** LOT 11 — motif du refus d'un marqueur non authentifié (aperçu seulement). */
+  pendingRestoreRejectedReason: string | null;
   backups: BackupHistoryEntry[];
 }
 

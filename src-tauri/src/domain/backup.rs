@@ -185,14 +185,117 @@ pub fn write_private_bytes(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     Ok(())
 }
 
-pub fn write_manifest(file_path: &Path, manifest: &Value) -> Result<(), AppError> {
-    let pretty = serde_json::to_string_pretty(manifest)
+/// Écrit un manifeste **scellé** (LOT 11). `db_path` localise la clé HMAC.
+pub fn write_manifest(
+    db_path: &Path,
+    file_path: &Path,
+    manifest: &Value,
+) -> Result<(), AppError> {
+    let sealed = seal_manifest_value(db_path, manifest)?;
+    let pretty = serde_json::to_string_pretty(&sealed)
         .map_err(|err| AppError::Internal(format!("Manifeste JSON : {err}")))?;
     write_private(&manifest_path(file_path), &format!("{pretty}\n"))
 }
 
-/// Statut du manifeste : `OK`, `ABSENT`, `MISMATCH`, `UNREADABLE`.
+/// Version courante : 2 = manifeste SCELLÉ (HMAC-SHA256, LOT 11).
+/// La version 1 (LOT 9) reste détectable : statut `UNSEALED`, à recréer.
+pub const MANIFEST_VERSION: i64 = 2;
+
+/// Contexte de domaine du sceau de manifeste (identique à `localSeal.ts`).
+pub const MANIFEST_SEAL_CONTEXT: &str = "depotpro-manifest-seal-v2";
+
+/// Message canonique du manifeste : ORDRE FIXE, identique au backend Node.
+pub fn manifest_seal_message(
+    format: &str,
+    version: i64,
+    backup_id: &str,
+    backup_type: &str,
+    origin: &str,
+    file_name: &str,
+    file_size_bytes: i64,
+    sha256: &str,
+    current_lot: &str,
+    created_at: &str,
+) -> String {
+    [
+        MANIFEST_SEAL_CONTEXT.to_string(),
+        format.to_string(),
+        version.to_string(),
+        backup_id.to_string(),
+        backup_type.to_string(),
+        origin.to_string(),
+        file_name.to_string(),
+        file_size_bytes.to_string(),
+        sha256.to_string(),
+        current_lot.to_string(),
+        created_at.to_string(),
+    ]
+    .join("|")
+}
+
+/// Scelle un manifeste JSON en y ajoutant le champ `seal`.
+pub fn seal_manifest_value(
+    db_path: &Path,
+    manifest: &Value,
+) -> Result<Value, AppError> {
+    let key = crate::db::restore::load_or_create_seal_key(db_path)?;
+    let message = manifest_seal_message(
+        manifest.get("format").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("version").and_then(Value::as_i64).unwrap_or(0),
+        manifest.get("backupId").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("backupType").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("origin").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("fileName").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("fileSizeBytes").and_then(Value::as_i64).unwrap_or(0),
+        manifest.get("sha256").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("currentLot").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("createdAt").and_then(Value::as_str).unwrap_or(""),
+    );
+    let mut sealed = manifest.clone();
+    if let Some(object) = sealed.as_object_mut() {
+        object.insert(
+            "seal".to_string(),
+            Value::String(hex::encode(crate::db::restore::hmac_sha256(
+                &key,
+                message.as_bytes(),
+            ))),
+        );
+    }
+    Ok(sealed)
+}
+
+/// Vérifie le sceau d'un manifeste. `false` si absent, non v2 ou invalide.
+pub fn verify_manifest_seal(db_path: &Path, manifest: &Value) -> bool {
+    let Some(seal) = manifest.get("seal").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(key) = crate::db::restore::load_or_create_seal_key(db_path) else {
+        return false;
+    };
+    let message = manifest_seal_message(
+        manifest.get("format").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("version").and_then(Value::as_i64).unwrap_or(0),
+        manifest.get("backupId").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("backupType").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("origin").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("fileName").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("fileSizeBytes").and_then(Value::as_i64).unwrap_or(0),
+        manifest.get("sha256").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("currentLot").and_then(Value::as_str).unwrap_or(""),
+        manifest.get("createdAt").and_then(Value::as_str).unwrap_or(""),
+    );
+    let expected = hex::encode(crate::db::restore::hmac_sha256(&key, message.as_bytes()));
+    expected.len() == seal.len()
+        && expected
+            .bytes()
+            .zip(seal.bytes())
+            .fold(0_u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+}
+
+/// Statut du manifeste : `OK`, `ABSENT`, `MISMATCH`, `UNREADABLE`, `UNSEALED`.
 pub fn inspect_manifest(
+    db_path: &Path,
     file_path: &Path,
     backup_id: &str,
     expected_sha256: &str,
@@ -221,12 +324,25 @@ pub fn inspect_manifest(
             Some("Manifeste incohérent avec l’historique (identifiant ou empreinte).".into()),
         );
     }
-    if parsed.get("format").and_then(Value::as_str) != Some("depotpro-backup-manifest")
-        || parsed.get("version").and_then(Value::as_i64) != Some(1)
-    {
+    if parsed.get("format").and_then(Value::as_str) != Some("depotpro-backup-manifest") {
         return (
             "UNREADABLE".into(),
             Some("Format de manifeste non reconnu.".into()),
+        );
+    }
+    if parsed.get("version").and_then(Value::as_i64) != Some(MANIFEST_VERSION) {
+        return (
+            "UNSEALED".into(),
+            Some(
+                "Manifeste v1 non scellé : recréez la sauvegarde (aucune donnée n'est perdue, le fichier .db reste intact)."
+                    .into(),
+            ),
+        );
+    }
+    if !verify_manifest_seal(db_path, &parsed) {
+        return (
+            "MISMATCH".into(),
+            Some("Manifeste non authentifié : sceau HMAC invalide (modifié ou forgé).".into()),
         );
     }
     ("OK".into(), None)
@@ -240,6 +356,12 @@ pub fn read_manifest(file_path: &Path) -> Result<Value, AppError> {
         .ok_or_else(|| AppError::NotFound("Aucun manifeste associé à cette sauvegarde.".into()))
 }
 
+/// LOT 11 — écrit le marqueur de restauration **scellé** (HMAC-SHA256).
+///
+/// Le message canonique est construit ICI, avec l'ordre fixe partagé avec
+/// `server/security/localSeal.ts` (Node). Sans sceau valide, le marqueur est
+/// refusé au démarrage : un accès aux fichiers ne suffit plus à déclencher une
+/// restauration.
 pub fn write_pending_restore(db_path: &Path, pending: &Value) -> Result<(), AppError> {
     if pending.get("confirmation").and_then(Value::as_str) != Some(RESTORE_CONFIRMATION) {
         return Err(AppError::Validation(
@@ -251,9 +373,59 @@ pub fn write_pending_restore(db_path: &Path, pending: &Value) -> Result<(), AppE
             AppError::Internal(format!("Dossier applicatif inaccessible : {err}"))
         })?;
     }
-    let pretty = serde_json::to_string_pretty(pending)
+    let sealed = seal_marker_value(db_path, pending)?;
+    let pretty = serde_json::to_string_pretty(&sealed)
         .map_err(|err| AppError::Internal(format!("Marqueur de restauration : {err}")))?;
     write_private(&pending_restore_marker_path(db_path), &format!("{pretty}\n"))
+}
+
+/// Contexte de domaine du sceau : empêche le rejeu d'un sceau d'un autre usage.
+pub const RESTORE_SEAL_CONTEXT: &str = "depotpro-restore-seal-v1";
+
+/// Message canonique : ORDRE FIXE, identique à `localSeal.ts` et `db/restore.rs`.
+pub fn restore_seal_message(
+    version: i64,
+    backup_id: &str,
+    staged_path: &str,
+    staged_checksum: &str,
+    confirmation: &str,
+    requested_by_user_id: Option<&str>,
+) -> String {
+    [
+        RESTORE_SEAL_CONTEXT.to_string(),
+        version.to_string(),
+        backup_id.to_string(),
+        staged_path.to_string(),
+        staged_checksum.to_string(),
+        confirmation.to_string(),
+        requested_by_user_id.unwrap_or_default().to_string(),
+    ]
+    .join("|")
+}
+
+/// Ajoute (ou remplace) le champ `seal` d'un marqueur JSON.
+fn seal_marker_value(db_path: &Path, pending: &Value) -> Result<Value, AppError> {
+    let key = crate::db::restore::load_or_create_seal_key(db_path)?;
+    let version = pending.get("version").and_then(Value::as_i64).unwrap_or(1);
+    let message = restore_seal_message(
+        version,
+        pending.get("backupId").and_then(Value::as_str).unwrap_or(""),
+        pending.get("stagedPath").and_then(Value::as_str).unwrap_or(""),
+        pending.get("stagedChecksum").and_then(Value::as_str).unwrap_or(""),
+        pending.get("confirmation").and_then(Value::as_str).unwrap_or(""),
+        pending.get("requestedByUserId").and_then(Value::as_str),
+    );
+    let mut sealed = pending.clone();
+    if let Some(object) = sealed.as_object_mut() {
+        object.insert(
+            "seal".to_string(),
+            Value::String(hex::encode(crate::db::restore::hmac_sha256(
+                &key,
+                message.as_bytes(),
+            ))),
+        );
+    }
+    Ok(sealed)
 }
 
 pub fn read_pending_restore(db_path: &Path) -> Result<Option<Value>, AppError> {
@@ -397,6 +569,31 @@ pub async fn assert_sqlite_file_healthy(path: &Path) -> Result<SqliteInspection,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LOT 11 — VECTEUR PARTAGÉ avec Node (`tests/lot11-securite-locale.test.ts`).
+    /// Clé 32 octets nuls : le sceau de manifeste doit être identique dans les
+    /// deux runtimes, sinon une sauvegarde scellée par l'un devient
+    /// « non authentifiée » pour l'autre.
+    #[test]
+    fn sceau_manifeste_vecteur_partage_avec_node() {
+        let key = vec![0_u8; 32];
+        let message = manifest_seal_message(
+            "depotpro-backup-manifest",
+            2,
+            "b1",
+            "MANUAL",
+            "LOCAL",
+            "depotpro-manual.db",
+            4096,
+            &"c".repeat(64),
+            "LOT_9",
+            "2026-11-16T00:00:00.000Z",
+        );
+        assert_eq!(
+            hex::encode(crate::db::restore::hmac_sha256(&key, message.as_bytes())),
+            "57ec3dfe7077b15d2b8b93fd2ecc16d1a3682fccc400cc423a2a42d881fe791e"
+        );
+    }
 
     #[test]
     fn empreinte_du_vecteur_connu() {

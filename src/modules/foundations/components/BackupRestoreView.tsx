@@ -10,6 +10,7 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  ShieldAlert,
   ShieldCheck,
   Trash2,
   Upload,
@@ -277,7 +278,7 @@ export function BackupRestoreView({ currentUser }: { currentUser: AuthenticatedU
             Sauvegardes, Restauration &amp; Fiabilisation
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            LOT 9 · Instantanés SQLite cohérents WAL, empreinte SHA-256, restauration vérifiée sur base séparée · 100 % hors ligne
+            LOT 9 · Instantanés SQLite cohérents WAL, empreinte SHA-256, restauration vérifiée sur base séparée · manifestes scellés HMAC (LOT 11) · 100 % hors ligne
           </p>
         </div>
         <Button variant="outline" onClick={() => void refetch()} disabled={isFetching}>
@@ -285,6 +286,27 @@ export function BackupRestoreView({ currentUser }: { currentUser: AuthenticatedU
           Actualiser
         </Button>
       </div>
+
+      {/* LOT 11 — un marqueur de restauration non authentifié est signalé ici :
+          l'aperçu reste consultable, l'activation est refusée au démarrage. */}
+      {data.pendingRestoreRejectedReason && (
+        <Card className="border-destructive/60 bg-destructive/5">
+          <CardHeader className="pb-2">
+            <CardDescription className="flex items-center gap-2 text-destructive">
+              <ShieldAlert className="h-4 w-4" />
+              Marqueur de restauration refusé (sécurité LOT 11)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-1 text-sm">
+            <p>{data.pendingRestoreRejectedReason}</p>
+            <p className="text-xs text-muted-foreground">
+              Aucune base n&apos;a été remplacée. Supprimez
+              <code className="mx-1 rounded bg-muted px-1">restore-pending.json</code>
+              du dossier de données pour démarrer normalement.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Indicateurs */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

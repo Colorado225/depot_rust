@@ -15,18 +15,25 @@ import {
   writePendingRestore,
 } from '../db/pendingRestore.ts';
 import { AppError } from '../error.ts';
+import { ensurePrivateDir, restrictFile } from '../security/fsGuard.ts';
+import { sealManifest, verifyManifestSeal } from '../security/localSeal.ts';
 
 export type BackupType = 'MANUAL' | 'AUTO' | 'USB_EXPORT' | 'PRE_RESTORE';
 export type BackupOrigin = 'LOCAL' | 'IMPORTED';
-export type ManifestStatus = 'OK' | 'ABSENT' | 'MISMATCH' | 'UNREADABLE';
+/** `UNSEALED` : manifeste v1 d'avant le scellement HMAC (LOT 11), à recréer. */
+export type ManifestStatus = 'OK' | 'ABSENT' | 'MISMATCH' | 'UNREADABLE' | 'UNSEALED';
+
+/** Manifeste scellé : format `depotpro-backup-manifest`, version 2. */
+export const MANIFEST_FORMAT = 'depotpro-backup-manifest';
+export const MANIFEST_VERSION = 2;
 
 /** Limite d'import d'une sauvegarde externe (256 Mo), lue dans system_meta si présente. */
 const DEFAULT_IMPORT_MAX_BYTES = 256 * 1024 * 1024;
 const SQLITE_MAGIC = Buffer.from('SQLite format 3\u0000', 'latin1');
 
 export interface BackupManifestDTO {
-  format: 'depotpro-backup-manifest';
-  version: 1;
+  format: typeof MANIFEST_FORMAT;
+  version: typeof MANIFEST_VERSION;
   app: 'DepotPro CI';
   currency: 'XOF';
   backupId: string;
@@ -39,6 +46,8 @@ export interface BackupManifestDTO {
   foreignKeyViolations: number;
   currentLot: string;
   createdAt: string;
+  /** LOT 11 — HMAC-SHA256 du contenu du manifeste (clé locale hors base). */
+  seal?: string;
 }
 
 export interface BackupConfigDTO {
@@ -73,6 +82,11 @@ export interface BackupOverviewDTO {
   lastRestoreAt: string | null;
   config: BackupConfigDTO;
   pendingRestore: PendingRestore | null;
+  /**
+   * LOT 11 — motif du refus quand un marqueur existe mais n'est pas authentifié.
+   * L'aperçu reste consultable (diagnostic) ; seule l'activation est bloquée.
+   */
+  pendingRestoreRejectedReason: string | null;
   backups: BackupHistoryEntryDTO[];
 }
 
@@ -235,24 +249,54 @@ export class BackupRepository {
     return row?.value ?? 'INCONNU';
   }
 
+  /**
+   * LOT 11 — manifeste v2 SCELLÉ (HMAC-SHA256, clé locale hors base).
+   *
+   * v1 (LOT 9) ne contenait qu'un SHA-256 recalculé depuis le fichier : il
+   * prouvait l'intégrité physique, jamais l'authenticité. Un manifeste v1 reste
+   * lisible (`ABSENT`/`UNSEALED`) mais ne suffit plus à autoriser un
+   * téléchargement ou une restauration : il faut le recréer.
+   */
   private writeManifest(
     filePath: string,
-    data: Omit<BackupManifestDTO, 'format' | 'version' | 'app' | 'currency'>
+    data: Omit<BackupManifestDTO, 'format' | 'version' | 'app' | 'currency' | 'seal'>
   ): void {
-    const manifest: BackupManifestDTO = {
-      format: 'depotpro-backup-manifest',
-      version: 1,
-      app: 'DepotPro CI',
-      currency: 'XOF',
+    const base = {
+      format: MANIFEST_FORMAT as typeof MANIFEST_FORMAT,
+      version: MANIFEST_VERSION as typeof MANIFEST_VERSION,
+      app: 'DepotPro CI' as const,
+      currency: 'XOF' as const,
       ...data,
     };
-    fs.writeFileSync(manifestPath(filePath), `${JSON.stringify(manifest, null, 2)}\n`, {
+    const manifest: BackupManifestDTO = {
+      ...base,
+      seal: sealManifest(this.dbPath, {
+        format: base.format,
+        version: base.version,
+        backupId: base.backupId,
+        backupType: base.backupType,
+        origin: base.origin,
+        fileName: base.fileName,
+        fileSizeBytes: base.fileSizeBytes,
+        sha256: base.sha256,
+        currentLot: base.currentLot,
+        createdAt: base.createdAt,
+      }),
+    };
+    const target = manifestPath(filePath);
+    ensurePrivateDir(path.dirname(path.resolve(filePath)));
+    fs.writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
     });
+    restrictFile(target);
   }
 
-  /** Compare le manifeste au fichier et à l'empreinte enregistrée en base. */
+  /**
+   * Compare le manifeste au fichier, à l'empreinte enregistrée en base ET à son
+   * sceau HMAC (LOT 11). Statuts : `OK`, `ABSENT`, `MISMATCH`, `UNREADABLE`,
+   * `UNSEALED` (manifeste v1 d'avant le scellement).
+   */
   private inspectManifest(
     filePath: string,
     backupId: string,
@@ -262,18 +306,45 @@ export class BackupRepository {
     if (!fs.existsSync(mPath)) {
       return { status: 'ABSENT', reason: null };
     }
+    let parsed: Partial<BackupManifestDTO>;
     try {
-      const parsed = JSON.parse(fs.readFileSync(mPath, 'utf8')) as Partial<BackupManifestDTO>;
-      if (parsed.backupId !== backupId || parsed.sha256 !== expectedSha256) {
-        return { status: 'MISMATCH', reason: 'Manifeste incohérent avec l’historique (identifiant ou empreinte).' };
-      }
-      if (parsed.format !== 'depotpro-backup-manifest' || parsed.version !== 1) {
-        return { status: 'UNREADABLE', reason: 'Format de manifeste non reconnu.' };
-      }
-      return { status: 'OK', reason: null };
+      parsed = JSON.parse(fs.readFileSync(mPath, 'utf8')) as Partial<BackupManifestDTO>;
     } catch {
       return { status: 'UNREADABLE', reason: 'Manifeste JSON illisible.' };
     }
+    if (parsed.backupId !== backupId || parsed.sha256 !== expectedSha256) {
+      return { status: 'MISMATCH', reason: 'Manifeste incohérent avec l’historique (identifiant ou empreinte).' };
+    }
+    if (parsed.format !== MANIFEST_FORMAT) {
+      return { status: 'UNREADABLE', reason: 'Format de manifeste non reconnu.' };
+    }
+    if (parsed.version !== MANIFEST_VERSION) {
+      return {
+        status: 'UNSEALED',
+        reason:
+          'Manifeste v1 non scellé : recréez la sauvegarde (aucune donnée n’est perdue, le fichier .db reste intact).',
+      };
+    }
+    const sealCheck = verifyManifestSeal(
+      this.dbPath,
+      {
+        format: parsed.format,
+        version: parsed.version,
+        backupId: parsed.backupId!,
+        backupType: parsed.backupType as string,
+        origin: parsed.origin as string,
+        fileName: parsed.fileName as string,
+        fileSizeBytes: parsed.fileSizeBytes as number,
+        sha256: parsed.sha256!,
+        currentLot: parsed.currentLot as string,
+        createdAt: parsed.createdAt as string,
+      },
+      parsed.seal
+    );
+    if (!sealCheck.ok) {
+      return { status: 'MISMATCH', reason: `Manifeste non authentifié : ${sealCheck.reason}` };
+    }
+    return { status: 'OK', reason: null };
   }
 
   getManifest(backupId: string): BackupManifestDTO {
@@ -296,6 +367,25 @@ export class BackupRepository {
   // ---------------------------------------------------------------------------
   // Configuration (system_meta)
   // ---------------------------------------------------------------------------
+
+  /**
+   * LOT 11 — l'aperçu ne doit pas échouer à cause d'un marqueur forgé : on
+   * renvoie `null` + un motif, et l'écran de sauvegarde affiche l'alerte.
+   * Le démarrage, lui, refuse toujours la restauration (cf. `readPendingRestore`).
+   */
+  private readPendingRestoreForDisplay(): {
+    pendingRestore: PendingRestore | null;
+    pendingRestoreRejectedReason: string | null;
+  } {
+    try {
+      return { pendingRestore: readPendingRestore(this.dbPath), pendingRestoreRejectedReason: null };
+    } catch (err) {
+      return {
+        pendingRestore: null,
+        pendingRestoreRejectedReason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
 
   private getMeta(key: string): string | null {
     const row = this.db.prepare('SELECT value FROM system_meta WHERE key = ?').get(key) as
@@ -419,7 +509,7 @@ export class BackupRepository {
       lastAutoBackupAt: this.getMeta('backup.last_auto_at') || null,
       lastRestoreAt: this.getMeta('backup.last_restore_at') || null,
       config: this.getConfig(),
-      pendingRestore: readPendingRestore(this.dbPath),
+      ...this.readPendingRestoreForDisplay(),
       backups,
     };
   }
@@ -444,7 +534,7 @@ export class BackupRepository {
   // ---------------------------------------------------------------------------
 
   createBackup(input: CreateBackupInput): BackupHistoryEntryDTO {
-    fs.mkdirSync(this.backupsDir, { recursive: true });
+    ensurePrivateDir(this.backupsDir);
     const id = crypto.randomUUID();
     const fileName = `depotpro-${input.type.toLowerCase()}-${fileStamp()}-${id.slice(0, 8)}.db`;
     const finalPath = path.join(this.backupsDir, fileName);
@@ -465,6 +555,7 @@ export class BackupRepository {
       size = fs.statSync(tmpPath).size;
       checksum = sha256FileSync(tmpPath);
       fs.renameSync(tmpPath, finalPath);
+      restrictFile(finalPath);
       this.writeManifest(finalPath, {
         backupId: id,
         backupType: input.type,
@@ -610,9 +701,14 @@ export class BackupRepository {
     if (!reason) {
       const manifest = this.inspectManifest(entry.filePath, entry.id, entry.sha256Checksum);
       manifestStatus = manifest.status;
-      // Un manifeste absent est toléré (sauvegarde ancienne ou copiée à la main) ;
-      // un manifeste falsifié ou illisible est un signal d'altération.
-      if (manifestStatus === 'MISMATCH' || manifestStatus === 'UNREADABLE') {
+      // Un manifeste absent est toléré (sauvegarde ancienne) ; un manifeste
+      // falsifié, illisible ou non scellé (v1 du LOT 9) est bloquant : la
+      // restauration et le téléchargement exigent une preuve d'authenticité.
+      if (
+        manifestStatus === 'MISMATCH' ||
+        manifestStatus === 'UNREADABLE' ||
+        manifestStatus === 'UNSEALED'
+      ) {
         reason = manifest.reason;
       }
     }
@@ -726,7 +822,7 @@ export class BackupRepository {
       throw new AppError('VALIDATION_ERROR', 'Empreinte SHA-256 de transfert invalide.', 400);
     }
 
-    fs.mkdirSync(this.backupsDir, { recursive: true });
+    ensurePrivateDir(this.backupsDir);
     const id = crypto.randomUUID();
     const fileName = `depotpro-import-${fileStamp()}-${id.slice(0, 8)}.db`;
     const finalPath = path.join(this.backupsDir, fileName);
@@ -754,6 +850,7 @@ export class BackupRepository {
       foreignKeyViolations = inspection.foreignKeyViolations;
       size = fs.statSync(tmpPath).size;
       fs.renameSync(tmpPath, finalPath);
+      restrictFile(finalPath);
       this.writeManifest(finalPath, {
         backupId: id,
         backupType: 'USB_EXPORT',
@@ -849,7 +946,7 @@ export class BackupRepository {
 
     // 2. Restauration RÉELLE sur une base séparée : la copie est ouverte,
     //    les migrations manquantes y sont appliquées, puis elle est revérifiée.
-    fs.mkdirSync(this.restoreDir, { recursive: true });
+    ensurePrivateDir(this.restoreDir);
     const stagedPath = path.join(
       this.restoreDir,
       `restore-staging-${fileStamp()}-${crypto.randomUUID().slice(0, 8)}.db`
@@ -947,9 +1044,19 @@ export class BackupRepository {
   }
 
   cancelRestore(userId: string | null): boolean {
+    // LOT 11 — le marqueur est scellé : on lit (et authentifie) son identifiant
+    // AVANT de le supprimer, pour que le journal nomme la restauration annulée
+    // au lieu d'écrire un identifiant factice après coup.
+    const pending = readPendingRestore(this.dbPath);
     const cancelled = cancelPendingRestore(this.dbPath);
     if (cancelled) {
-      this.writeAudit(userId, 'BACKUP_RESTORE_CANCELLED', 'system', 'restore-pending', '{}');
+      this.writeAudit(
+        userId,
+        'BACKUP_RESTORE_CANCELLED',
+        'backup_history',
+        pending?.backupId ?? 'restore-pending',
+        JSON.stringify({ backupId: pending?.backupId ?? null, stagedPath: pending?.stagedPath ?? null })
+      );
     }
     return cancelled;
   }

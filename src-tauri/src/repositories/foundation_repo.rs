@@ -405,9 +405,16 @@ pub async fn me(pool: &SqlitePool, raw_token: &str) -> Result<Json, AppError> {
     json::to_json(&crate::repositories::auth_repo::validate_session_token(pool, raw_token).await?)
 }
 
+/// LOT 11 — Changement de mot de passe AVEC révocation des autres sessions.
+///
+/// `keep_token` est le jeton de la session courante (prouvé par le mot de passe
+/// actuel) : il reste valide, toutes les autres sessions de l'utilisateur sont
+/// révoquées dans la même transaction. Parité stricte avec
+/// `AuthRepository.changePassword` du backend Node.
 pub async fn change_password(
     pool: &SqlitePool,
     actor_id: &str,
+    keep_token: Option<&str>,
     input: &Json,
 ) -> Result<Json, AppError> {
     let current = json::str_field(input, "currentPassword")?;
@@ -440,7 +447,32 @@ pub async fn change_password(
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
-        audit(&mut *tx, Some(actor_id), "PASSWORD_CHANGED", "users", actor_id, &json!({})).await?;
+        let keep_hash = match keep_token {
+            Some(raw) => Some({
+                use sha2::{Digest, Sha256};
+                hex::encode(Sha256::digest(raw.as_bytes()))
+            }),
+            None => None,
+        };
+        let revoked = sqlx::query(
+            "UPDATE user_sessions SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE user_id = ? AND revoked_at IS NULL
+               AND (? IS NULL OR token_hash <> ?);",
+        )
+        .bind(actor_id)
+        .bind(keep_hash.as_deref())
+        .bind(keep_hash.as_deref())
+        .execute(&mut *tx)
+        .await?;
+        audit(
+            &mut *tx,
+            Some(actor_id),
+            "PASSWORD_CHANGED",
+            "users",
+            actor_id,
+            &json!({ "revokedSessions": revoked.rows_affected() }),
+        )
+        .await?;
         Ok::<(), AppError>(())
     }
     .await;

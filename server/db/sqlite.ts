@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../error.ts';
+import { ensurePrivateDir, restrictDatabaseFiles } from '../security/fsGuard.ts';
 import { type AppliedRestoreInfo, applyPendingRestore } from './pendingRestore.ts';
 
 export interface SqliteConnectionResult {
@@ -24,10 +25,9 @@ export function initLocalSqlite(
   migrationsDir = process.env.DEPOTPRO_MIGRATIONS_DIR ??
     path.resolve(process.cwd(), 'migrations')
 ): SqliteConnectionResult {
+  // LOT 11 — le dossier de données est privé (0700) avant toute écriture.
   const dir = path.dirname(dbFilePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  ensurePrivateDir(dir);
 
   // LOT 9 : une restauration préparée est activée AVANT toute ouverture de la
   // connexion applicative. Sans marqueur, cette étape est sans effet.
@@ -40,6 +40,9 @@ export function initLocalSqlite(
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA synchronous = NORMAL;');
   db.exec('PRAGMA busy_timeout = 5000;');
+  // LOT 11 — base et sidecars WAL en 0600 : un autre compte local ne peut pas
+  // copier les données financières (constat C4 du rapport de sécurité).
+  restrictDatabaseFiles(dbFilePath);
 
   // Table de suivi des migrations SQL versionnées
   db.exec(`

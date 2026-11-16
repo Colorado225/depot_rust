@@ -268,6 +268,26 @@ def main() -> int:
     ):
         if token not in backup_repo:
             errors.append(message)
+    # LOT 11 — la restauration doit être AUTHENTIFIÉE : un marqueur non scellé
+    # doit être refusé (constat C1 du rapport de sécurité, mesuré).
+    domain_backup = (SRC / "domain" / "backup.rs").read_text()
+    restore = (SRC / "db" / "restore.rs").read_text()
+    for token, message in (
+        ("RESTORE_SEAL_CONTEXT", "Contexte de sceau du marqueur de restauration absent"),
+        ("hmac_sha256", "HMAC-SHA256 du marqueur absent (restauration non authentifiée)"),
+        ("load_or_create_seal_key", "Clé de scellement locale absente"),
+        ("MANIFEST_VERSION", "Version de manifeste scellé absente"),
+        ("verify_manifest_seal", "Vérification du sceau de manifeste absente"),
+    ):
+        source = domain_backup if token in ("MANIFEST_VERSION", "verify_manifest_seal", "RESTORE_SEAL_CONTEXT") else restore
+        if token not in source:
+            errors.append(message)
+    if "verify_restore_seal" not in restore:
+        errors.append("Le marqueur de restauration n'est pas vérifié avant activation (C1)")
+    if "keep_token" not in (SRC / "repositories" / "foundation_repo.rs").read_text():
+        errors.append("Révocation des sessions au changement de mot de passe absente (C5)")
+    if "secure_dir" not in (SRC / "db" / "mod.rs").read_text():
+        errors.append("Permissions 0700/0600 absentes du module de base (C4)")
     pdf = (SRC / "domain" / "pdf_export.rs").read_text()
     if "%PDF-1.4" not in pdf:
         errors.append("Générateur PDF Rust autonome absent")

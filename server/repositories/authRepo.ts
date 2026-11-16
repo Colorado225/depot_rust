@@ -452,7 +452,20 @@ export class AuthRepository {
     }
   }
 
-  changePassword(userId: string, currentPassword: string, newPassword: string): void {
+  /**
+   * LOT 11 — Change le mot de passe ET révoque les sessions.
+   *
+   * `keepTokenHash` conserve la session courante (l'utilisateur vient de saisir
+   * son mot de passe actuel : le déconnecter le forcerait à se reconnecter
+   * immédiatement). Toutes les AUTRES sessions sont révoquées : un mot de passe
+   * changé après un soupçon de compromission coupe donc réellement l'accès.
+   */
+  changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    keepTokenHash: string | null = null
+  ): void {
     const row = this.db
       .prepare('SELECT password_hash AS passwordHash FROM users WHERE id = ?')
       .get(userId) as { passwordHash: string } | undefined;
@@ -486,12 +499,27 @@ export class AuthRepository {
         )
         .run(nextHash, userId);
 
+      // LOT 11 — révocation des autres sessions dans la MÊME transaction.
+      const revoked = this.db
+        .prepare(
+          `UPDATE user_sessions
+           SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           WHERE user_id = ? AND revoked_at IS NULL
+             AND (? IS NULL OR token_hash <> ?)`
+        )
+        .run(userId, keepTokenHash, keepTokenHash);
+
       this.db
         .prepare(
           `INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, payload_json)
-           VALUES (?, ?, 'PASSWORD_CHANGED', 'users', ?, '{}')`
+           VALUES (?, ?, 'PASSWORD_CHANGED', 'users', ?, ?)`
         )
-        .run(crypto.randomUUID(), userId, userId);
+        .run(
+          crypto.randomUUID(),
+          userId,
+          userId,
+          JSON.stringify({ revokedSessions: Number(revoked.changes ?? 0) })
+        );
 
       this.db.exec('COMMIT;');
     } catch (err) {

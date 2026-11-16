@@ -309,7 +309,12 @@ pub async fn get_overview(pool: &SqlitePool, paths: &BackupPaths) -> Result<Json
     let last: (Option<String>,) = sqlx::query_as("SELECT MAX(created_at) FROM backup_history")
         .fetch_one(pool)
         .await?;
-    let pending = backup_domain::read_pending_restore(&paths.db_path)?;
+    // LOT 11 — un marqueur forgé ne doit pas rendre l'aperçu inutilisable :
+    // on renvoie un motif au lieu de propager l'erreur (le démarrage refuse).
+    let (pending, pending_rejected) = match backup_domain::read_pending_restore(&paths.db_path) {
+        Ok(value) => (value, None),
+        Err(err) => (None, Some(err.to_string())),
+    };
     Ok(serde_json::json!({
         "backupsDir": paths.backups_dir.to_string_lossy(),
         "totalBackups": totals.0,
@@ -319,6 +324,7 @@ pub async fn get_overview(pool: &SqlitePool, paths: &BackupPaths) -> Result<Json
         "lastRestoreAt": get_meta(pool, "backup.last_restore_at").await?,
         "config": get_config(pool).await?,
         "pendingRestore": pending,
+        "pendingRestoreRejectedReason": pending_rejected,
         "backups": backups,
     }))
 }
@@ -339,7 +345,7 @@ pub async fn get_backup(pool: &SqlitePool, id: &str) -> Result<Json, AppError> {
     Ok(to_entry(&json::row_to_json(row, &[])))
 }
 
-pub async fn get_manifest(pool: &SqlitePool, id: &str) -> Result<Json, AppError> {
+pub async fn get_manifest(pool: &SqlitePool, db_path: &Path, id: &str) -> Result<Json, AppError> {
     let entry = get_backup(pool, id).await?;
     let file_path = PathBuf::from(
         entry
@@ -351,7 +357,7 @@ pub async fn get_manifest(pool: &SqlitePool, id: &str) -> Result<Json, AppError>
         .get("sha256Checksum")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let (status, reason) = backup_domain::inspect_manifest(&file_path, id, checksum);
+    let (status, reason) = backup_domain::inspect_manifest(db_path, &file_path, id, checksum);
     if status != "OK" {
         return Err(AppError::Conflict(format!(
             "Manifeste non vérifié : {}",
@@ -403,6 +409,8 @@ pub async fn create_backup(
     std::fs::create_dir_all(&paths.backups_dir).map_err(|err| {
         AppError::Internal(format!("Dossier des sauvegardes inaccessible : {err}"))
     })?;
+    // LOT 11 — 0700 sur le dossier des sauvegardes (lecture d'un autre compte interdite).
+    db::secure_dir(&paths.backups_dir)?;
 
     let id = json::new_id();
     let short = id.chars().take(8).collect::<String>();
@@ -440,7 +448,7 @@ pub async fn create_backup(
         })?;
         let manifest_value = serde_json::json!({
             "format": "depotpro-backup-manifest",
-            "version": 1,
+            "version": backup_domain::MANIFEST_VERSION,
             "app": "DepotPro CI",
             "currency": "XOF",
             "backupId": id,
@@ -454,7 +462,7 @@ pub async fn create_backup(
             "currentLot": current_lot(pool).await?,
             "createdAt": backup_domain::now_iso(),
         });
-        backup_domain::write_manifest(&final_path, &manifest_value)?;
+        backup_domain::write_manifest(&paths.db_path, &final_path, &manifest_value)?;
         Ok((size, checksum))
     }
     .await;
@@ -606,6 +614,7 @@ pub async fn prune_auto_backups(pool: &SqlitePool, retention: i64) -> Result<usi
 
 pub async fn verify_backup(
     pool: &SqlitePool,
+    db_path: &Path,
     id: &str,
     user_id: Option<&str>,
 ) -> Result<Json, AppError> {
@@ -650,9 +659,13 @@ pub async fn verify_backup(
     let mut manifest_status = "ABSENT".to_string();
     if reason.is_none() {
         let (status, manifest_reason) =
-            backup_domain::inspect_manifest(&file_path, id, &stored);
+            backup_domain::inspect_manifest(db_path, &file_path, id, &stored);
         manifest_status = status;
         if manifest_status == "MISMATCH" || manifest_status == "UNREADABLE" {
+            reason = manifest_reason;
+        } else if manifest_status == "UNSEALED" {
+            // LOT 11 — un manifeste v1 n'authentifie rien : la sauvegarde doit
+            // être recréée (les données du .db restent intactes).
             reason = manifest_reason;
         }
     }
@@ -723,7 +736,11 @@ pub async fn verify_backup(
     }))
 }
 
-pub async fn read_backup_file(pool: &SqlitePool, id: &str) -> Result<Json, AppError> {
+pub async fn read_backup_file(
+    pool: &SqlitePool,
+    db_path: &Path,
+    id: &str,
+) -> Result<Json, AppError> {
     let entry = get_backup(pool, id).await?;
     let file_path = PathBuf::from(entry.get("filePath").and_then(Value::as_str).unwrap_or(""));
     if !file_path.is_file() {
@@ -731,7 +748,7 @@ pub async fn read_backup_file(pool: &SqlitePool, id: &str) -> Result<Json, AppEr
             "Le fichier de sauvegarde a été déplacé ou supprimé.".into(),
         ));
     }
-    let verification = verify_backup(pool, id, None).await?;
+    let verification = verify_backup(pool, db_path, id, None).await?;
     if verification.get("status").and_then(Value::as_str) != Some("OK") {
         return Err(AppError::Conflict(format!(
             "Téléchargement refusé : sauvegarde non vérifiée ({}).",
@@ -799,6 +816,8 @@ pub async fn import_external_backup(
     std::fs::create_dir_all(&paths.backups_dir).map_err(|err| {
         AppError::Internal(format!("Dossier des sauvegardes inaccessible : {err}"))
     })?;
+    // LOT 11 — 0700 sur le dossier des sauvegardes (lecture d'un autre compte interdite).
+    db::secure_dir(&paths.backups_dir)?;
     let id = json::new_id();
     let short = id.chars().take(8).collect::<String>();
     let file_name = format!(
@@ -829,7 +848,7 @@ pub async fn import_external_backup(
         })?;
         let manifest_value = serde_json::json!({
             "format": "depotpro-backup-manifest",
-            "version": 1,
+            "version": backup_domain::MANIFEST_VERSION,
             "app": "DepotPro CI",
             "currency": "XOF",
             "backupId": id,
@@ -843,7 +862,7 @@ pub async fn import_external_backup(
             "currentLot": current_lot(pool).await?,
             "createdAt": backup_domain::now_iso(),
         });
-        backup_domain::write_manifest(&final_path, &manifest_value)?;
+        backup_domain::write_manifest(&paths.db_path, &final_path, &manifest_value)?;
         Ok((checksum, inspection.integrity_result, inspection.foreign_key_violations))
     }
     .await;
@@ -956,7 +975,7 @@ pub async fn restore_backup(
         ));
     }
 
-    let verification = verify_backup(pool, &id, user_id).await?;
+    let verification = verify_backup(pool, &paths.db_path, &id, user_id).await?;
     if verification.get("status").and_then(Value::as_str) != Some("OK") {
         return Err(AppError::Conflict(format!(
             "Restauration refusée : la sauvegarde n'est pas intègre ({}).",
@@ -990,6 +1009,8 @@ pub async fn restore_backup(
     std::fs::create_dir_all(&paths.restore_dir).map_err(|err| {
         AppError::Internal(format!("Dossier de restauration inaccessible : {err}"))
     })?;
+    // LOT 11 — 0700 sur le dossier de restauration (copies staged comprises).
+    db::secure_dir(&paths.restore_dir)?;
     let staged_path = paths.restore_dir.join(format!(
         "restore-staging-{}-{}.db",
         backup_domain::file_stamp(),

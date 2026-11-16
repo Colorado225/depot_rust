@@ -117,7 +117,7 @@ pub async fn backup_cancel_restore(state: State<'_, AppState>, input: Json) -> R
 pub async fn backup_verify(state: State<'_, AppState>, input: Json) -> Result<Json, String> {
     let user = backup_actor(&state.pool, &input).await?;
     let id = json::id_field(&input).map_err(fail)?;
-    backups::verify_backup(&state.pool, &id, Some(&user.id))
+    backups::verify_backup(&state.pool, &state.db_path, &id, Some(&user.id))
         .await
         .map_err(fail)
 }
@@ -140,14 +140,14 @@ pub async fn backup_restore(state: State<'_, AppState>, input: Json) -> Result<J
 pub async fn backup_get_manifest(state: State<'_, AppState>, input: Json) -> Result<Json, String> {
     let _user = backup_actor(&state.pool, &input).await?;
     let id = json::id_field(&input).map_err(fail)?;
-    backups::get_manifest(&state.pool, &id).await.map_err(fail)
+    backups::get_manifest(&state.pool, &state.db_path, &id).await.map_err(fail)
 }
 
 #[tauri::command]
 pub async fn backup_download_file(state: State<'_, AppState>, input: Json) -> Result<Json, String> {
     let _user = backup_actor(&state.pool, &input).await?;
     let id = json::id_field(&input).map_err(fail)?;
-    backups::read_backup_file(&state.pool, &id).await.map_err(fail)
+    backups::read_backup_file(&state.pool, &state.db_path, &id).await.map_err(fail)
 }
 
 #[tauri::command]

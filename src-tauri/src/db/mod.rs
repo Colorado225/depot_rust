@@ -22,6 +22,45 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
+/// LOT 11 — permissions privées : 0700 pour les dossiers, 0600 pour les fichiers.
+/// Sans effet sur Windows (ACL héritées du profil) : le durcissement Windows
+/// reste un point ouvert documenté du LOT 11.
+pub fn secure_dir(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
+            AppError::Internal(format!("Permissions du dossier {} : {e}", path.display()))
+        })?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+pub fn secure_file(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// LOT 11 — base et sidecars WAL en 0600, dossier de données en 0700.
+pub fn secure_database_files(db_path: &Path) {
+    if let Some(parent) = db_path.parent() {
+        let _ = secure_dir(parent);
+    }
+    secure_file(db_path);
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut name = db_path.as_os_str().to_os_string();
+        name.push(suffix);
+        secure_file(Path::new(&PathBuf::from(name)));
+    }
+}
+
 /// État applicatif partagé par toutes les commandes Tauri.
 pub struct AppState {
     pub pool: SqlitePool,
@@ -156,6 +195,8 @@ pub async fn init_sqlite_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
         std::fs::create_dir_all(parent).map_err(|e| {
             AppError::Internal(format!("Impossible de créer le répertoire de données : {e}"))
         })?;
+        // LOT 11 — dossier privé AVANT toute écriture, y compris le marqueur et la clé.
+        secure_dir(parent)?;
     }
 
     let applied_restore = restore::apply_pending_restore(db_path).await?;
