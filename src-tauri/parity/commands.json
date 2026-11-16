@@ -1,0 +1,774 @@
+{
+  "version": 1,
+  "architecture": "REACT_UI_TO_TAURI_COMMANDS_TO_RUST_DOMAIN_TO_SQLX_TO_SQLITE",
+  "total": 95,
+  "implemented": 95,
+  "tranches": {
+    "1": "Fondations, migrations, restauration différée, authentification/RBAC, paramètres",
+    "2": "Catalogue, stocks, fournisseurs, achats et réceptions (PORTÉ)",
+    "3": "Clients, POS, consignes, caisse, rapports (PORTÉ)",
+    "4": "Sauvegardes, portabilité USB, diagnostics LOT 9, exports et retrait du pont HTTP (PORTÉ)"
+  },
+  "commands": [
+    {
+      "command": "check_system_health",
+      "domain": "Fondations",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::check_system_health",
+      "fallback": null
+    },
+    {
+      "command": "get_migrations_status",
+      "domain": "Fondations",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::get_migrations_status",
+      "fallback": null
+    },
+    {
+      "command": "get_architectural_decisions",
+      "domain": "Fondations",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::get_architectural_decisions",
+      "fallback": null
+    },
+    {
+      "command": "get_license_state",
+      "domain": "Fondations",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::get_license_state",
+      "fallback": null
+    },
+    {
+      "command": "update_local_license",
+      "domain": "Fondations",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::update_local_license",
+      "fallback": null
+    },
+    {
+      "command": "reset_local_license",
+      "domain": "Fondations",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::reset_local_license",
+      "fallback": null
+    },
+    {
+      "command": "trigger_integrity_check",
+      "domain": "Fondations",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::trigger_integrity_check",
+      "fallback": null
+    },
+    {
+      "command": "run_foundation_self_test",
+      "domain": "Fondations",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::run_foundation_self_test",
+      "fallback": null
+    },
+    {
+      "command": "auth_bootstrap_status",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_bootstrap_status",
+      "fallback": null
+    },
+    {
+      "command": "auth_initialize_depot",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_initialize_depot",
+      "fallback": null
+    },
+    {
+      "command": "auth_login",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_login",
+      "fallback": null
+    },
+    {
+      "command": "auth_logout",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_logout",
+      "fallback": null
+    },
+    {
+      "command": "auth_me",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_me",
+      "fallback": null
+    },
+    {
+      "command": "auth_change_password",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_change_password",
+      "fallback": null
+    },
+    {
+      "command": "auth_list_users",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_list_users",
+      "fallback": null
+    },
+    {
+      "command": "auth_create_user",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_create_user",
+      "fallback": null
+    },
+    {
+      "command": "auth_toggle_user_status",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_toggle_user_status",
+      "fallback": null
+    },
+    {
+      "command": "auth_unlock_user",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_unlock_user",
+      "fallback": null
+    },
+    {
+      "command": "auth_update_user_role",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_update_user_role",
+      "fallback": null
+    },
+    {
+      "command": "auth_list_roles",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_list_roles",
+      "fallback": null
+    },
+    {
+      "command": "auth_list_login_logs",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::auth_list_login_logs",
+      "fallback": null
+    },
+    {
+      "command": "settings_get",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::settings_get",
+      "fallback": null
+    },
+    {
+      "command": "settings_update",
+      "domain": "Authentification & paramètres",
+      "tranche": 1,
+      "status": "RUST",
+      "handler": "commands::foundation::settings_update",
+      "fallback": null
+    },
+    {
+      "command": "catalog_list_categories",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_list_categories",
+      "fallback": null
+    },
+    {
+      "command": "catalog_create_category",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_create_category",
+      "fallback": null
+    },
+    {
+      "command": "catalog_list_brands",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_list_brands",
+      "fallback": null
+    },
+    {
+      "command": "catalog_create_brand",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_create_brand",
+      "fallback": null
+    },
+    {
+      "command": "catalog_list_units",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_list_units",
+      "fallback": null
+    },
+    {
+      "command": "catalog_list_packaging",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_list_packaging",
+      "fallback": null
+    },
+    {
+      "command": "catalog_create_packaging",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_create_packaging",
+      "fallback": null
+    },
+    {
+      "command": "catalog_update_packaging",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_update_packaging",
+      "fallback": null
+    },
+    {
+      "command": "catalog_list_products",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_list_products",
+      "fallback": null
+    },
+    {
+      "command": "catalog_create_product",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_create_product",
+      "fallback": null
+    },
+    {
+      "command": "catalog_update_product",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_update_product",
+      "fallback": null
+    },
+    {
+      "command": "catalog_toggle_product_active",
+      "domain": "Catalogue",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::catalog_toggle_product_active",
+      "fallback": null
+    },
+    {
+      "command": "stock_list_balances",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::stock_list_balances",
+      "fallback": null
+    },
+    {
+      "command": "stock_list_movements",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::stock_list_movements",
+      "fallback": null
+    },
+    {
+      "command": "stock_record_movement",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::stock_record_movement",
+      "fallback": null
+    },
+    {
+      "command": "stock_list_inventories",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::stock_list_inventories",
+      "fallback": null
+    },
+    {
+      "command": "stock_validate_inventory",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::stock_validate_inventory",
+      "fallback": null
+    },
+    {
+      "command": "suppliers_list",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::suppliers_list",
+      "fallback": null
+    },
+    {
+      "command": "suppliers_create",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::suppliers_create",
+      "fallback": null
+    },
+    {
+      "command": "suppliers_update",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::suppliers_update",
+      "fallback": null
+    },
+    {
+      "command": "suppliers_toggle_active",
+      "domain": "Stocks & fournisseurs",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::suppliers_toggle_active",
+      "fallback": null
+    },
+    {
+      "command": "purchases_list_orders",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_list_orders",
+      "fallback": null
+    },
+    {
+      "command": "purchases_create_order",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_create_order",
+      "fallback": null
+    },
+    {
+      "command": "purchases_validate_order",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_validate_order",
+      "fallback": null
+    },
+    {
+      "command": "purchases_cancel_order",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_cancel_order",
+      "fallback": null
+    },
+    {
+      "command": "purchases_receive_order",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_receive_order",
+      "fallback": null
+    },
+    {
+      "command": "purchases_list_receipts",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_list_receipts",
+      "fallback": null
+    },
+    {
+      "command": "purchases_list_payments",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_list_payments",
+      "fallback": null
+    },
+    {
+      "command": "purchases_record_payment",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_record_payment",
+      "fallback": null
+    },
+    {
+      "command": "purchases_record_return",
+      "domain": "Achats & réceptions",
+      "tranche": 2,
+      "status": "RUST",
+      "handler": "commands::operations::purchases_record_return",
+      "fallback": null
+    },
+    {
+      "command": "customers_list",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::customers_list",
+      "fallback": null
+    },
+    {
+      "command": "customers_statement",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::customers_statement",
+      "fallback": null
+    },
+    {
+      "command": "customers_create",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::customers_create",
+      "fallback": null
+    },
+    {
+      "command": "customers_update",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::customers_update",
+      "fallback": null
+    },
+    {
+      "command": "customers_toggle_active",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::customers_toggle_active",
+      "fallback": null
+    },
+    {
+      "command": "customers_record_payment",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::customers_record_payment",
+      "fallback": null
+    },
+    {
+      "command": "pos_list_sales",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::pos_list_sales",
+      "fallback": null
+    },
+    {
+      "command": "pos_create_sale",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::pos_create_sale",
+      "fallback": null
+    },
+    {
+      "command": "pos_cancel_sale",
+      "domain": "Clients & point de vente",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::pos_cancel_sale",
+      "fallback": null
+    },
+    {
+      "command": "consignments_summary",
+      "domain": "Consignes",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::consignments_summary",
+      "fallback": null
+    },
+    {
+      "command": "consignments_balances",
+      "domain": "Consignes",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::consignments_balances",
+      "fallback": null
+    },
+    {
+      "command": "consignments_movements",
+      "domain": "Consignes",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::consignments_movements",
+      "fallback": null
+    },
+    {
+      "command": "consignments_customer_return",
+      "domain": "Consignes",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::consignments_customer_return",
+      "fallback": null
+    },
+    {
+      "command": "consignments_customer_operation",
+      "domain": "Consignes",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::consignments_customer_operation",
+      "fallback": null
+    },
+    {
+      "command": "consignments_supplier_operation",
+      "domain": "Consignes",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::consignments_supplier_operation",
+      "fallback": null
+    },
+    {
+      "command": "consignments_depot_operation",
+      "domain": "Consignes",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::consignments_depot_operation",
+      "fallback": null
+    },
+    {
+      "command": "finance_overview",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_overview",
+      "fallback": null
+    },
+    {
+      "command": "finance_list_registers",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_list_registers",
+      "fallback": null
+    },
+    {
+      "command": "finance_list_sessions",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_list_sessions",
+      "fallback": null
+    },
+    {
+      "command": "finance_session_detail",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_session_detail",
+      "fallback": null
+    },
+    {
+      "command": "finance_open_session",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_open_session",
+      "fallback": null
+    },
+    {
+      "command": "finance_manual_movement",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_manual_movement",
+      "fallback": null
+    },
+    {
+      "command": "finance_close_session",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_close_session",
+      "fallback": null
+    },
+    {
+      "command": "finance_override_session",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_override_session",
+      "fallback": null
+    },
+    {
+      "command": "finance_list_expense_categories",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_list_expense_categories",
+      "fallback": null
+    },
+    {
+      "command": "finance_create_expense_category",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_create_expense_category",
+      "fallback": null
+    },
+    {
+      "command": "finance_list_expenses",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_list_expenses",
+      "fallback": null
+    },
+    {
+      "command": "finance_record_expense",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_record_expense",
+      "fallback": null
+    },
+    {
+      "command": "finance_list_payments",
+      "domain": "Caisse & trésorerie",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::finance_list_payments",
+      "fallback": null
+    },
+    {
+      "command": "reports_overview",
+      "domain": "Rapports & exports",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::reports_overview",
+      "fallback": null
+    },
+    {
+      "command": "reports_product_margins",
+      "domain": "Rapports & exports",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::reports_product_margins",
+      "fallback": null
+    },
+    {
+      "command": "reports_snapshot",
+      "domain": "Rapports & exports",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::reports_snapshot",
+      "fallback": null
+    },
+    {
+      "command": "reports_daily",
+      "domain": "Rapports & exports",
+      "tranche": 3,
+      "status": "RUST",
+      "handler": "commands::commercial::reports_daily",
+      "fallback": null
+    },
+    {
+      "command": "backup_overview",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_overview",
+      "fallback": null
+    },
+    {
+      "command": "backup_config_update",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_config_update",
+      "fallback": null
+    },
+    {
+      "command": "backup_create",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_create",
+      "fallback": null
+    },
+    {
+      "command": "backup_auto_run",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_auto_run",
+      "fallback": null
+    },
+    {
+      "command": "backup_diagnostics",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_diagnostics",
+      "fallback": null
+    },
+    {
+      "command": "backup_self_test",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_self_test",
+      "fallback": null
+    },
+    {
+      "command": "backup_cancel_restore",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_cancel_restore",
+      "fallback": null
+    },
+    {
+      "command": "backup_verify",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_verify",
+      "fallback": null
+    },
+    {
+      "command": "backup_restore",
+      "domain": "Sauvegardes & restauration (LOT 9)",
+      "tranche": 4,
+      "status": "RUST",
+      "handler": "commands::backups::backup_restore",
+      "fallback": null
+    }
+  ]
+}

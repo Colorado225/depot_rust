@@ -7,6 +7,7 @@ import {
   Building2,
   CheckSquare,
   Database,
+  DatabaseBackup,
   KeyRound,
   Landmark,
   LogOut,
@@ -45,6 +46,7 @@ import { CatalogManagementView } from '@/src/modules/catalog/components/CatalogM
 import { ConsignmentsView } from '@/src/modules/consignments/components/ConsignmentsView';
 import { FinanceView } from '@/src/modules/finance/components/FinanceView';
 import { ArchitectureDecisionsView } from '@/src/modules/foundations/components/ArchitectureDecisionsView';
+import { BackupRestoreView } from '@/src/modules/foundations/components/BackupRestoreView';
 import { DatabaseMigrationsView } from '@/src/modules/foundations/components/DatabaseMigrationsView';
 import { LotRoadmapVerificationView } from '@/src/modules/foundations/components/LotRoadmapVerificationView';
 import { SystemOverviewView } from '@/src/modules/foundations/components/SystemOverviewView';
@@ -72,6 +74,7 @@ type NavSectionId =
   | 'users'
   | 'overview'
   | 'database'
+  | 'backups'
   | 'architecture'
   | 'verification';
 
@@ -121,6 +124,12 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Base SQLite & Migrations',
     icon: Database,
     requiredPermission: 'settings.depot.manage',
+  },
+  {
+    id: 'backups',
+    label: 'Sauvegardes & Restauration',
+    icon: DatabaseBackup,
+    requiredPermission: 'backup.manage',
   },
   {
     id: 'architecture',
@@ -324,6 +333,7 @@ function AuthenticatedWorkspace({
           {activeSection === 'users' && <UsersManagementView currentUser={user} />}
           {activeSection === 'overview' && <SystemOverviewView />}
           {activeSection === 'database' && <DatabaseMigrationsView />}
+          {activeSection === 'backups' && <BackupRestoreView currentUser={user} />}
           {activeSection === 'architecture' && <ArchitectureDecisionsView />}
           {activeSection === 'verification' && <LotRoadmapVerificationView />}
         </main>

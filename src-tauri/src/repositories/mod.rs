@@ -1,2 +1,15 @@
 pub mod auth_repo;
 pub mod system_repo;
+pub mod foundation_repo;
+pub mod common;
+pub mod catalog_repo;
+pub mod stock_repo;
+pub mod supplier_repo;
+pub mod purchase_repo;
+pub mod customer_repo;
+pub mod pos_repo;
+pub mod consignment_repo;
+pub mod finance_repo;
+pub mod reports_repo;
+pub mod backup_repo;
+pub mod report_export_repo;
