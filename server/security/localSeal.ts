@@ -23,50 +23,44 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../error.ts';
-import { ensurePrivateDir, restrictFile } from './fsGuard.ts';
+import { loadOrCreateKey, type KeyStorage } from './keys.ts';
 
-/** Nom du fichier de clé, à côté de la base active. */
+/**
+ * Nom historique du fichier de clé (LOT 11.1). Depuis le LOT 11.6 la clé vit
+ * dans le trousseau du système ; ce nom ne sert plus qu'à détecter et migrer
+ * une installation antérieure.
+ */
 export const SEAL_KEY_FILENAME = '.depotpro-seal.key';
 
 /** Préfixe de domaine : empêche le rejeu d'un sceau d'un autre usage. */
 export const RESTORE_SEAL_CONTEXT = 'depotpro-restore-seal-v1';
 
+/** Emplacement historique du fichier de clé (migration 11.1 → 11.6 uniquement). */
 export function sealKeyPath(dbFilePath: string): string {
   return path.join(path.dirname(path.resolve(dbFilePath)), SEAL_KEY_FILENAME);
 }
 
-/** Lit la clé existante. Renvoie `null` si elle n'existe pas (ou est invalide). */
-export function readSealKey(dbFilePath: string): Buffer | null {
-  const keyPath = sealKeyPath(dbFilePath);
-  if (!fs.existsSync(keyPath)) return null;
-  const raw = fs.readFileSync(keyPath, 'utf8').trim();
-  if (!/^[a-f0-9]{64}$/i.test(raw)) {
-    throw new AppError(
-      'DATABASE_ERROR',
-      `Clé de scellement locale illisible (${keyPath}). Les opérations scellées sont refusées jusqu'à correction.`,
-      500
-    );
-  }
-  return Buffer.from(raw, 'hex');
+/** Dossier de données associé à une base : la clé y est rangée. */
+function dataDirOf(dbFilePath: string): string {
+  return path.dirname(path.resolve(dbFilePath));
 }
 
 /**
- * Charge la clé de scellement, ou la crée au premier usage (0600).
+ * Charge la clé de scellement, ou la crée au premier usage.
  * `create: false` permet à la vérification de refuser un marqueur scellé
  * alors que l'installation n'a jamais généré de clé (marqueur étranger).
+ *
+ * LOT 11.6 : la clé est rangée dans le trousseau du système (option O1), avec
+ * repli fichier 0600 quand aucun trousseau n'est disponible. `loadOrCreateKey`
+ * migre de lui-même une clé laissée en fichier par le LOT 11.1.
  */
 export function loadSealKey(dbFilePath: string, options: { create?: boolean } = {}): Buffer | null {
-  const existing = readSealKey(dbFilePath);
-  if (existing) return existing;
-  if (options.create === false) return null;
+  return loadOrCreateKey(dataDirOf(dbFilePath), 'seal', options).key;
+}
 
-  const dir = path.dirname(path.resolve(dbFilePath));
-  ensurePrivateDir(dir);
-  const keyPath = sealKeyPath(dbFilePath);
-  const generated = crypto.randomBytes(32);
-  fs.writeFileSync(keyPath, `${generated.toString('hex')}\n`, { encoding: 'utf8', mode: 0o600 });
-  restrictFile(keyPath);
-  return generated;
+/** Où la clé de scellement est réellement rangée (diagnostic / écran de statut). */
+export function sealKeyStorage(dbFilePath: string): KeyStorage {
+  return loadOrCreateKey(dataDirOf(dbFilePath), 'seal', { create: false }).storage;
 }
 
 /** HMAC-SHA256 hexadécimal. */

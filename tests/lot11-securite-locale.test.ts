@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { openDatabase } from '../server/db/driver.ts';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLocalSqlite } from '../server/db/sqlite.ts';
 import {
@@ -23,6 +23,12 @@ import {
   restoreSealMessage,
   sealKeyPath,
 } from '../server/security/localSeal.ts';
+import {
+  FALLBACK_FILENAMES,
+  createMemoryKeyring,
+  loadOrCreateKey,
+  setKeyringForTests,
+} from '../server/security/keys.ts';
 
 /**
  * LOT 11 — Sécurité des données locales (volet Node).
@@ -52,7 +58,13 @@ function createTempDbPath(): string {
   return path.join(createTempDir(), 'data', 'depotpro.db');
 }
 
+/**
+ * LOT 11.6 : les clés vivent désormais dans le trousseau du système. Les tests
+ * utilisent un trousseau EN MÉMOIRE (aucune écriture dans le Keychain / Secret
+ * Service de la machine, aucun état partagé entre tests).
+ */
 afterEach(() => {
+  setKeyringForTests(undefined);
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
@@ -64,6 +76,7 @@ function modeOf(target: string): string {
 }
 
 function fixture() {
+  setKeyringForTests(createMemoryKeyring());
   const dbPath = createTempDbPath();
   const { db } = initLocalSqlite(dbPath, MIGRATIONS_DIR);
   const authRepo = new AuthRepository(db);
@@ -90,7 +103,13 @@ describe('LOT 11 — Permissions des répertoires et de la base (C4)', () => {
       expect(modeOf(backup.filePath)).toBe('0600');
       expect(modeOf(manifest)).toBe('0600');
       expect(modeOf(path.join(dataDir, 'backups'))).toBe('0700');
-      // La clé de scellement est privée elle aussi.
+      // LOT 11.6 : quand la clé tombe en repli fichier (pas de trousseau),
+      // ce fichier doit être en 0600 comme le reste des données.
+      const fileBacked = loadOrCreateKey(path.dirname(f.dbPath), 'seal', { forceFile: true });
+      expect(fileBacked.key).not.toBeNull();
+      const fallbackFile = path.join(path.dirname(f.dbPath), FALLBACK_FILENAMES.seal);
+      expect(fs.existsSync(fallbackFile)).toBe(true);
+      expect(modeOf(fallbackFile)).toBe('0600');
       expect(modeOf(sealKeyPath(f.dbPath))).toBe('0600');
       for (const sidecar of ['-wal', '-shm']) {
         const file = `${f.dbPath}${sidecar}`;
@@ -141,7 +160,7 @@ describe('LOT 11 — Marqueur de restauration scellé (C1)', () => {
 
     expect(() => initLocalSqlite(f.dbPath, MIGRATIONS_DIR)).toThrow(/Restauration refusée/);
     // La base n'a pas été remplacée : le client ajouté après la sauvegarde existe.
-    const inspect = new DatabaseSync(f.dbPath, { readOnly: true });
+    const inspect = openDatabase(f.dbPath, { readOnly: true }).db;
     expect(
       (inspect.prepare("SELECT COUNT(*) AS c FROM customers WHERE id='c-apres'").get() as { c: number }).c
     ).toBe(1);
@@ -415,13 +434,46 @@ describe('LOT 11 — Parité du sceau Node ↔ Rust', () => {
     const key = loadSealKey(f.dbPath, { create: false });
     expect(key).not.toBeNull();
     expect(key).toHaveLength(32);
-    expect(fs.existsSync(sealKeyPath(f.dbPath))).toBe(true);
-    expect(path.basename(sealKeyPath(f.dbPath))).toBe(SEAL_KEY_FILENAME);
+    // LOT 11.6 : plus aucun fichier de clé par défaut — la clé est au trousseau.
+    expect(fs.existsSync(sealKeyPath(f.dbPath))).toBe(false);
+    const stored = loadOrCreateKey(path.dirname(f.dbPath), 'seal', { create: false });
+    expect(stored.storage.backend).toBe('os');
     // La clé ne doit jamais être persistée dans la base applicative.
     const dump = f.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
     expect(dump.map((t) => t.name)).not.toContain('seal_key');
-    expect(fs.readdirSync(path.dirname(f.dbPath)).some((name) => name.includes('seal'))).toBe(true);
+    expect(SEAL_KEY_FILENAME).toBe('.depotpro-seal.key');
     f.db.close();
+  });
+
+  it('repli fichier quand aucun trousseau n’est disponible, puis migration vers le trousseau', () => {
+    setKeyringForTests(null); // simule un poste sans trousseau (conteneur, CI)
+    const dir = createTempDir();
+    const created = loadOrCreateKey(dir, 'seal');
+    expect(created.storage.backend).toBe('file');
+    expect(created.storage.reason).toBeTruthy();
+    const filePath = path.join(dir, FALLBACK_FILENAMES.seal);
+    expect(fs.existsSync(filePath)).toBe(true);
+    if (isUnix) expect(modeOf(filePath)).toBe('0600');
+    const value = fs.readFileSync(filePath, 'utf8').trim();
+
+    // Un trousseau redevient disponible : la clé existante doit migrer sans
+    // changer de valeur (sinon les manifestes déjà scellés deviennent illisibles).
+    setKeyringForTests(createMemoryKeyring());
+    const migrated = loadOrCreateKey(dir, 'seal');
+    expect(migrated.storage.backend).toBe('os');
+    expect(migrated.key?.toString('hex')).toBe(value);
+    expect(fs.existsSync(filePath)).toBe(false);
+  });
+
+  it('refuse de poursuivre si deux clés de scellement divergent', async () => {
+    const { migrateSealKeyFile } = await import('../server/security/keys.ts');
+    setKeyringForTests(createMemoryKeyring());
+    const dir = createTempDir();
+    // Trousseau déjà pourvu d'une clé…
+    loadOrCreateKey(dir, 'seal');
+    // …et un fichier hérité du LOT 11.1 avec une AUTRE valeur.
+    fs.writeFileSync(path.join(dir, SEAL_KEY_FILENAME), `${'a'.repeat(64)}\n`, { mode: 0o600 });
+    expect(() => migrateSealKeyFile(path.join(dir, 'depotpro.db'), dir)).toThrow(/divergent/i);
   });
 });
 

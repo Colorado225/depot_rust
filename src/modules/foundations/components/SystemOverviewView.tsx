@@ -3,6 +3,9 @@ import {
   CheckCircle2,
   Database,
   HardDrive,
+  KeyRound,
+  Lock,
+  LockOpen,
   RefreshCw,
   ShieldCheck,
   XCircle,
@@ -18,6 +21,7 @@ import { useIntegrityCheck, useSystemHealth } from '../services/systemService';
 
 export function SystemOverviewView() {
   const { data: health, isLoading, isError, error, refetch, isFetching } = useSystemHealth();
+  const encryption = health?.databaseEncryption;
   const integrityMutation = useIntegrityCheck();
   const [lastIntegrity, setLastIntegrity] = useState<IntegrityCheckResult | null>(null);
 
@@ -162,6 +166,38 @@ export function SystemOverviewView() {
             <p className="text-xs text-muted-foreground">
               Base locale autonome sans dépendance réseau
             </p>
+          </CardContent>
+        </Card>
+
+        {/* LOT 11.6 — état du chiffrement au repos, vérifiable à l'écran */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Chiffrement au repos</CardDescription>
+            <CardTitle className="flex items-center gap-2 font-mono text-2xl tabular-nums">
+              {encryption?.encrypted ? (
+                <>
+                  <Lock className="h-5 w-5 text-emerald-600" />
+                  SQLCipher
+                </>
+              ) : (
+                <>
+                  <LockOpen className="h-5 w-5 text-amber-600" />
+                  Aucun
+                </>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {encryption?.encrypted ? (
+              <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                <KeyRound className="h-3.5 w-3.5 shrink-0" />
+                Clé dans {encryption.keyStorage === 'os' ? 'le trousseau du système' : 'un fichier 0600'}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {encryption?.note ?? 'Base en clair : données financières lisibles par toute copie du fichier.'}
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>

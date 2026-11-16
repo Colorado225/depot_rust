@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import type { SelfTestReportDTO, SelfTestCheckDTO } from './systemRepo.ts';
 
 export interface ReliabilityCheckDTO {
@@ -57,7 +57,7 @@ export class ReliabilityRepository {
   private readonly migrationsDir: string;
 
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: DatabaseLike,
     options: { migrationsDir?: string } = {}
   ) {
     this.migrationsDir = path.resolve(

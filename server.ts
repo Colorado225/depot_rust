@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { initLocalSqlite } from './server/db/sqlite.ts';
+import { keyHex, loadOrCreateKey } from './server/security/keys.ts';
 import { AppError } from './server/error.ts';
 import { AuthRepository } from './server/repositories/authRepo.ts';
 import { BackupRepository } from './server/repositories/backupRepo.ts';
@@ -46,13 +47,26 @@ async function bootstrapServer() {
   app.use(desktopCors());
   app.use(express.json({ limit: '2mb' }));
 
-  const { db, dbPath, restoreApplied } = initLocalSqlite();
+  const { db, dbPath, restoreApplied, encryption } = initLocalSqlite();
+  const encryptionHealth = {
+    encrypted: encryption.encrypted,
+    keyStorage: encryption.storage?.backend ?? ('none' as const),
+    note: encryption.storage?.reason ?? null,
+  };
   const migrationsDir = process.env.DEPOTPRO_MIGRATIONS_DIR
     ? path.resolve(process.env.DEPOTPRO_MIGRATIONS_DIR)
     : path.resolve(process.cwd(), 'migrations');
-  const systemRepo = new SystemRepository(db, dbPath);
+  // LOT 11.6 — la clé SQLCipher sert aussi aux sauvegardes (chiffrées elles
+  // aussi) : sans elle, la vérification d'une sauvegarde saine échouerait.
+  const databaseKeyOption = encryption.encrypted
+    ? { hex: keyHex(loadOrCreateKey(path.dirname(dbPath), 'database', { create: false }).key!) }
+    : null;
+  const systemRepo = new SystemRepository(db, dbPath, encryptionHealth);
   const authRepo = new AuthRepository(db);
-  const backupRepo = new BackupRepository(db, dbPath, { migrationsDir });
+  const backupRepo = new BackupRepository(db, dbPath, {
+    migrationsDir,
+    databaseKey: databaseKeyOption,
+  });
   const reliabilityRepo = new ReliabilityRepository(db, { migrationsDir });
 
   // Trace la restauration effectivement appliquée au démarrage (LOT 9).

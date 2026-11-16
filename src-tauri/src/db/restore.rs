@@ -42,56 +42,34 @@ pub struct AppliedRestoreInfo {
 }
 
 /// LOT 11 — clé de scellement locale (32 octets hex, 0600), à côté de la base.
+/// Emplacement historique du fichier de clé (LOT 11.1 → 11.6).
+/// Depuis le LOT 11.6 la clé vit dans le trousseau ; ce chemin ne sert plus
+/// qu'à détecter une installation antérieure et à la migrer.
 pub fn seal_key_path(db_path: &Path) -> PathBuf {
-    db_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(".depotpro-seal.key")
+    crate::db::keys::fallback_path(db_path, crate::db::keys::KeyKind::Seal)
 }
 
-fn read_seal_key(db_path: &Path) -> Result<Option<Vec<u8>>, AppError> {
-    let path = seal_key_path(db_path);
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(&path).map_err(|e| {
-        AppError::Migration(format!("Clé de scellement illisible ({}): {e}", path.display()))
-    })?;
-    let trimmed = raw.trim();
-    if trimmed.len() != 64 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(AppError::Migration(format!(
-            "Clé de scellement locale invalide ({}). Les opérations scellées sont refusées.",
-            path.display()
-        )));
-    }
-    hex::decode(trimmed)
-        .map(Some)
-        .map_err(|e| AppError::Migration(format!("Clé de scellement non hexadécimale : {e}")))
+/// Lit la clé de scellement sans jamais en créer une.
+/// `Ok(None)` = cette installation n'a encore jamais scellé (ou la clé n'est
+/// pas disponible) : un marqueur ou un manifeste scellé par un AUTRE poste doit
+/// alors être refusé, pas vérifié avec une clé neuve.
+pub fn read_seal_key(db_path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    Ok(crate::db::keys::load_or_create_key(
+        db_path,
+        crate::db::keys::KeyKind::Seal,
+        false,
+    )?
+    .map(|loaded| loaded.key))
 }
 
-/// Charge la clé de scellement, ou la crée au premier usage (0600).
-/// LOT 11 : source unique, utilisée par le marqueur, le manifeste et le domaine.
+/// Charge la clé de scellement, ou la crée au premier usage.
+/// LOT 11.6 : trousseau du système d'abord (option O1), fichier 0600 en repli.
 pub fn load_or_create_seal_key(db_path: &Path) -> Result<Vec<u8>, AppError> {
-    if let Some(key) = read_seal_key(db_path)? {
-        return Ok(key);
-    }
-    if let Some(parent) = db_path.parent() {
-        secure_dir(parent)?;
-        std::fs::create_dir_all(parent).map_err(|e| {
-            AppError::Internal(format!("Dossier de données inaccessible : {e}"))
-        })?;
-    }
-    // 32 octets aléatoires : Uuid v4 ne suffit pas (122 bits), on combine deux
-    // sources d'OS indépendantes en 32 octets pleins.
-    let mut key = Vec::with_capacity(32);
-    key.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
-    key.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
-    let path = seal_key_path(db_path);
-    std::fs::write(&path, format!("{}\n", hex::encode(&key))).map_err(|e| {
-        AppError::Internal(format!("Écriture de la clé de scellement impossible : {e}"))
-    })?;
-    crate::db::secure_file(&path);
-    Ok(key)
+    crate::db::keys::load_or_create_key(db_path, crate::db::keys::KeyKind::Seal, true)?
+        .map(|loaded| loaded.key)
+        .ok_or_else(|| {
+            AppError::Internal("Clé de scellement indisponible sur ce poste.".into())
+        })
 }
 
 /// Message canonique : ORDRE FIXE, identique à `localSeal.ts` (Node).

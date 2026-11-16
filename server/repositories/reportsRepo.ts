@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import { buildTabularPdfBuffer, type PdfColumn } from '../domain/pdfExport.ts';
 import { AppError } from '../error.ts';
 
@@ -116,7 +116,7 @@ function csvCell(val: string | number | null | undefined): string {
 }
 
 export class ReportsRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseLike) {}
 
   private buildDatePredicate(columnExpr: string, start?: string, end?: string) {
     const clauses: string[] = [];

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { openDatabase, type DatabaseLike } from '../server/db/driver.ts';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLocalSqlite } from '../server/db/sqlite.ts';
 import { pendingRestoreMarkerPath, sha256FileSync } from '../server/db/pendingRestore.ts';
@@ -48,7 +48,7 @@ afterEach(() => {
 
 interface Fixture {
   dbPath: string;
-  db: DatabaseSync;
+  db: DatabaseLike;
   authRepo: AuthRepository;
   backupRepo: BackupRepository;
   reliabilityRepo: ReliabilityRepository;
@@ -73,7 +73,7 @@ function createFixture(
   return { dbPath, db, authRepo, backupRepo, reliabilityRepo, ownerId: owner.user.id };
 }
 
-function insertProduct(db: DatabaseSync, sku: string, name: string): void {
+function insertProduct(db: DatabaseLike, sku: string, name: string): void {
   db.prepare(
     `INSERT INTO products (id, sku, name, base_unit_id, purchase_price_xof, wholesale_price_xof, retail_price_xof)
      VALUES (?, ?, ?, 'unit-bottle', 400, 450, 500)`
@@ -84,7 +84,7 @@ function insertProduct(db: DatabaseSync, sku: string, name: string): void {
   ).run(`product-${sku}`);
 }
 
-function productSkus(db: DatabaseSync): string[] {
+function productSkus(db: DatabaseLike): string[] {
   return (
     db.prepare('SELECT sku FROM products ORDER BY sku ASC').all() as Array<{ sku: string }>
   ).map((r) => r.sku);
@@ -146,7 +146,7 @@ describe('LOT 9 — Fiabilisation : sauvegardes, restauration, sécurité, perfo
     expect(sha256FileSync(manual.filePath)).toBe(manual.sha256Checksum);
 
     // La copie est une vraie base SQLite autonome, lisible sans le WAL d'origine.
-    const copy = new DatabaseSync(manual.filePath, { readOnly: true });
+    const copy = openDatabase(manual.filePath, { readOnly: true }).db;
     expect(productSkus(copy)).toEqual(initialSkus);
     expect(
       (copy.prepare('PRAGMA integrity_check;').get() as { integrity_check: string }).integrity_check
@@ -227,7 +227,7 @@ describe('LOT 9 — Fiabilisation : sauvegardes, restauration, sécurité, perfo
     expect(fs.existsSync(pendingRestoreMarkerPath(f.dbPath))).toBe(false);
     expect(productSkus(f.db)).toEqual(['PROD-APRES', 'PROD-AVANT']);
 
-    const staged = new DatabaseSync(plan.stagedPath!, { readOnly: true });
+    const staged = openDatabase(plan.stagedPath!, { readOnly: true }).db;
     expect(productSkus(staged)).toEqual(['PROD-AVANT']);
     expect(
       (
@@ -394,7 +394,7 @@ describe('LOT 9 — Fiabilisation : sauvegardes, restauration, sécurité, perfo
     expect(plan.migrationsAppliedOnStaged).toBe(MIGRATIONS_AFTER_0010);
     expect(plan.rowsAfter.products).toBe(1);
 
-    const staged = new DatabaseSync(plan.stagedPath!, { readOnly: true });
+    const staged = openDatabase(plan.stagedPath!, { readOnly: true }).db;
     expect(
       (
         staged

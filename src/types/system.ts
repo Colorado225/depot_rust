@@ -12,6 +12,12 @@ export interface SystemHealth {
   currentLot: string;
   offlineReady: boolean;
   checkedAt: string;
+  /** LOT 11.6 — chiffrement au repos et emplacement de la clé. */
+  databaseEncryption?: {
+    encrypted: boolean;
+    keyStorage: 'os' | 'file' | 'none';
+    note: string | null;
+  };
 }
 
 export interface MigrationRecord {

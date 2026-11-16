@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { openDatabase, type DatabaseLike } from '../db/driver.ts';
 import { AppError } from '../error.ts';
 import { ensurePrivateDir, restrictFile } from '../security/fsGuard.ts';
 import { sealRestoreMarker, verifyRestoreMarkerSeal } from '../security/localSeal.ts';
@@ -72,15 +72,25 @@ export function sha256FileSync(filePath: string): string {
   return hash.digest('hex');
 }
 
+/**
+ * LOT 11.6 — clé à fournir pour inspecter un fichier chiffré.
+ * Les sauvegardes d'une base chiffrée sont elles-mêmes chiffrées (mesuré :
+ * `VACUUM INTO` conserve le chiffrement) : sans clé, l'inspection d'une
+ * sauvegarde saine échoue et l'application refuserait ses propres fichiers.
+ */
+export interface InspectOptions {
+  key?: { hex: string } | null;
+}
+
 /** Ouvre un fichier SQLite en lecture seule et le valide complètement. */
-export function inspectSqliteFile(filePath: string): SqliteFileInspection {
+export function inspectSqliteFile(filePath: string, options: InspectOptions = {}): SqliteFileInspection {
   if (!fs.existsSync(filePath)) {
     throw new AppError('NOT_FOUND', `Fichier SQLite introuvable : ${filePath}`, 404);
   }
 
-  let db: DatabaseSync;
+  let db: DatabaseLike;
   try {
-    db = new DatabaseSync(filePath, { readOnly: true });
+    db = openDatabase(filePath, { readOnly: true, key: options.key ?? null }).db;
   } catch (err) {
     throw new AppError(
       'VALIDATION_ERROR',
@@ -129,8 +139,11 @@ export function inspectSqliteFile(filePath: string): SqliteFileInspection {
 }
 
 /** Valide un fichier SQLite : utilisé avant tout téléchargement ou restauration. */
-export function assertSqliteFileHealthy(filePath: string): SqliteFileInspection {
-  const inspection = inspectSqliteFile(filePath);
+export function assertSqliteFileHealthy(
+  filePath: string,
+  options: InspectOptions = {}
+): SqliteFileInspection {
+  const inspection = inspectSqliteFile(filePath, options);
   if (inspection.integrityResult.toLowerCase() !== 'ok') {
     throw new AppError(
       'VALIDATION_ERROR',
@@ -264,7 +277,10 @@ function removeWalSidecars(dbFilePath: string): void {
  * Sécurité : en cas d'échec à n'importe quelle étape, la base courante est
  * laissée intacte et le marqueur est conservé (échec explicite au démarrage).
  */
-export function applyPendingRestore(dbFilePath: string): AppliedRestoreInfo | null {
+export function applyPendingRestore(
+  dbFilePath: string,
+  options: InspectOptions = {}
+): AppliedRestoreInfo | null {
   const pending = readPendingRestore(dbFilePath);
   if (!pending) return null;
 
@@ -283,13 +299,16 @@ export function applyPendingRestore(dbFilePath: string): AppliedRestoreInfo | nu
       500
     );
   }
-  assertSqliteFileHealthy(pending.stagedPath);
+  // La copie préparée est chiffrée comme la base : la clé doit être fournie,
+  // sinon une sauvegarde saine serait déclarée illisible (faux négatif qui
+  // bloquerait toute restauration sur une installation chiffrée).
+  assertSqliteFileHealthy(pending.stagedPath, options);
 
   // 2. Checkpoint WAL : les écritures de la session précédente sont repliées dans
   //    le fichier principal, puis les sidecars sont retirés pour éviter qu'un WAL
   //    de l'ancienne base soit appliqué à la nouvelle.
   if (fs.existsSync(dbFilePath)) {
-    const current = new DatabaseSync(dbFilePath);
+    const current = openDatabase(dbFilePath, { key: options.key ?? null }).db;
     try {
       current.exec('PRAGMA wal_checkpoint(TRUNCATE);');
     } finally {

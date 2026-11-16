@@ -292,6 +292,29 @@ def main() -> int:
     if "%PDF-1.4" not in pdf:
         errors.append("Générateur PDF Rust autonome absent")
 
+    # LOT 11.6 — les clés ne doivent pas rester dans un fichier quand un
+    # trousseau répond : le module Rust doit passer par le trousseau et
+    # conserver le repli 0600 seulement comme secours.
+    keys_rs = (SRC / "db" / "keys.rs").read_text()
+    for token, message in (
+        ("KEYRING_SERVICE", "Nom de service du trousseau absent (clés non portables)"),
+        ("keyring_account", "Comptes du trousseau absents (clés non retrouvables)"),
+        ("KeyBackend", "Le repli fichier n'est pas distingué du trousseau (pas de diagnostic)"),
+        ("load_or_create_key", "Chargement unifié des clés absent"),
+    ):
+        if token not in keys_rs:
+            errors.append(message)
+    if "keyring" not in (ROOT / "src-tauri" / "Cargo.toml").read_text():
+        errors.append("Dépendance Cargo absente : keyring (LOT 11.6)")
+    # La clé de scellement doit passer par le module de clés, pas écrire le
+    # fichier elle-même : sinon la migration vers le trousseau serait ignorée.
+    if "crate::db::keys::load_or_create_key" not in restore:
+        errors.append("La clé de scellement contourne le module de clés (repli non migré)")
+    # Le chiffrement de la base n'est pas encore porté côté Rust : le module
+    # DOIT le dire explicitement plutôt que de laisser croire à une couverture.
+    if "SQLCipher" not in keys_rs:
+        errors.append("Limite du chiffrement Rust non documentée dans db/keys.rs")
+
     cargo = (ROOT / "src-tauri" / "Cargo.toml").read_text()
     for dep in ("sqlx", "scrypt", "sha2", "serde_json", "tauri"):
         if dep not in cargo:

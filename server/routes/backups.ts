@@ -5,6 +5,7 @@ import { AuthRepository } from '../repositories/authRepo.ts';
 import { BackupRepository } from '../repositories/backupRepo.ts';
 import { ReliabilityRepository } from '../repositories/reliabilityRepo.ts';
 import { type AuthenticatedRequest, requirePermission } from '../security/authMiddleware.ts';
+import { auditReseal, resealManifests } from '../security/reseal.ts';
 
 const configSchema = z.object({
   autoEnabled: z.boolean(),
@@ -180,6 +181,26 @@ export function createBackupsRouter(
           userId: req.authUser!.id,
         })
       );
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * LOT 11.6 — re-scellement explicite des manifestes v1 (LOT 11.1).
+   * Sans cette route, une installation mise à jour garde des sauvegardes
+   * classées `UNSEALED` (bloquantes) jusqu'à ce qu'une nouvelle sauvegarde
+   * soit créée. Le `dryRun` est le mode par défaut : l'opérateur voit le
+   * rapport avant d'écrire quoi que ce soit.
+   */
+  router.post('/manifests/reseal', (req: AuthenticatedRequest, res, next) => {
+    try {
+      const dryRun = String((req.query as Record<string, unknown>).dryRun ?? 'true') !== 'false';
+      const report = resealManifests(backupRepo.dbPath, backupRepo.backupsDirectory, { dryRun });
+      if (!dryRun) {
+        auditReseal(backupRepo.db, report, req.authUser!.id);
+      }
+      res.json({ dryRun, ...report });
     } catch (err) {
       next(err);
     }

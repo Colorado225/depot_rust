@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import { assertNonNegativeXof, mulXofQty } from '../domain/money.ts';
 import { AppError } from '../error.ts';
 import { AuthRepository } from './authRepo.ts';
@@ -87,7 +87,7 @@ export class PosRepository {
   private readonly customerRepo: CustomerRepository;
 
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: DatabaseLike,
     private readonly authRepo: AuthRepository
   ) {
     this.customerRepo = new CustomerRepository(db);

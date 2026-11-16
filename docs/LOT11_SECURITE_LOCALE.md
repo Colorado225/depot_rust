@@ -9,6 +9,14 @@
 > C10 mesurés au §4 sont désormais **fermés par des tests**. Le §4 est conservé
 > tel qu'il a été rédigé (état de l'audit) pour garder la trace des preuves
 > avant/après.
+>
+> **Nuit du 16/11 — lot 11.6 livré** : base et sauvegardes **chiffrées**
+> (SQLCipher), clés dans le trousseau OS (option O1), re-scellement des manifestes
+> v1, base de prévisualisation séparée. Voir le **§10 « Rapport de réalisation —
+> lot 11.6 »** pour les preuves, les mesures du pilote et les limites (dont :
+> le chiffrement n'est **pas encore porté côté Rust**). C2 et C3 sont fermés
+> côté serveur Node.
+>
 > Branche `arena/3429f765-depot-rust`, base `f638c44`
 > Référentiel : `Implementtion.md` §1 (« système de sécurité »), §3 (séparation
 > Sécurité / Infrastructure), §9 (sauvegardes et restauration), §10
@@ -175,7 +183,7 @@ Toutes les sondes de cette section ont été exécutées avec le **code réel** 
 dépôt (`initLocalSqlite`, `AuthRepository`, `BackupRepository`) sur Linux, base
 temporaire, `node:sqlite` 3.51.3.
 
-### 4.1 Chiffrement de la base — **ABSENT (Critique)**
+### 4.1 Chiffrement de la base — **CORRIGÉ au lot 11.6 (Critique)**
 
 **Constat.** `src-tauri/src/lib.rs:72-73` ouvre
 `app_data_dir()/depotpro.db` avec `SqliteConnectOptions::new()` — sans
@@ -199,7 +207,7 @@ pas SQLCipher et le pragma est ignoré silencieusement. Un test qui vérifie
 seulement « pas d'exception » ne prouverait **pas** le chiffrement. Le seul
 test valable est : `sqlite3 <fichier>` échoue ou renvoie du binaire illisible.
 
-### 4.2 Chiffrement des sauvegardes et authentification — **ABSENT (Critique)**
+### 4.2 Chiffrement des sauvegardes et authentification — **CORRIGÉ au lot 11.6 (Critique)**
 
 **Mesure (sonde 2, exécutée).** Sauvegarde créée par `BackupRepository.createBackup`,
 puis ouverte en lecture seule **sans l'application** :
@@ -670,9 +678,147 @@ améliorer** avec `getrandom` au lot 11.6).
 
 | Lot | Contenu | Pourquoi maintenant |
 | --- | --- | --- |
-| **11.6** | SQLCipher + clé de base **et** clé de scellement dans le trousseau OS ; utilitaire de re-scellement des manifestes v1 ; base de preview distincte | Décision O1 prise ; ferme C2/C3 et la limite n°1 du §9.6 |
+| ~~**11.6**~~ | ~~SQLCipher + clés dans le trousseau OS ; re-scellement ; preview distincte~~ | **Livré — voir §10** (côté Node ; portage Rust du chiffrement restant) |
+| **11.6-bis** | Basculer `sqlx` sur `bundled-sqlcipher` (ou `rusqlite`) pour la coquille desktop | §10.6 : tant que ce n'est pas fait, le desktop écrit en clair |
 | **11.3** | `quick_check` au démarrage + écran de récupération | C6 : une base tronquée donne encore une erreur brute |
 | **11.4** | Sauvegarde pré-migration + `app.version` + refus de rétrogradation | C7/C8 mesurés (§4.7) |
 | **11.7** | Anti-rejeu : `backupSeq` monotone, refus d'une restauration antérieure à la dernière appliquée | Le sceau prouve l'origine, pas l'ancienneté |
 | **11.8** | Chaîne de hachage de `audit_logs` + `secure_delete` | C9 : `DELETE` reste sans trace et les octets restent dans le fichier |
 | **11.9** | Signature/notarisation réellement exécutées, test de désinstallation | C11 |
+
+## 10. Rapport de réalisation — lot 11.6 (16/11/2026, nuit)
+
+### 10.1 Ce qui change
+
+Le lot 11.6 ferme **C2** (base en clair) et **C3** (sauvegardes en clair), et
+lève la limite n°1 du §9.6 (clé de scellement dans `data/`). Il livre aussi
+la base de prévisualisation séparée.
+
+| Avant | Après |
+| --- | --- |
+| `data/depotpro.db` : en-tête `SQLite format 3`, lisible par `sqlite3`, DB Browser, `grep` | En-tête chiffré, illisible sans clé ; la chaîne `system_meta` ou un montant ne sont plus présents en clair dans le fichier |
+| Sauvegardes : fichiers `.db` en clair, lisibles sans l'application | Sauvegardes chiffrées elles aussi (`VACUUM INTO` conserve le chiffrement — mesuré) |
+| Clé de scellement en `.depotpro-seal.key` (0600) | Clé dans le trousseau du système (option O1), fichier 0600 seulement en repli signalé |
+| Aperçu web sur la **même** base que le poste installé | Aperçu sur `data/preview/` ; ouverture de `data/depotpro.db` **refusée** depuis un aperçu |
+| Manifestes v1 (LOT 11.1) bloqués `UNSEALED` sans recours | Route protégée de re-scellement, avec `dryRun` par défaut ; jamais de scellement d'un fichier altéré |
+
+### 10.2 Pilote : pourquoi `better-sqlite3-multiple-ciphers`
+
+`node:sqlite` **accepte** `PRAGMA key` sans erreur et **ne chiffre rien** (mesuré :
+le pragma est ignoré, le fichier garde son en-tête clair). C'est le piège
+principal de ce lot : l'absence d'exception ne prouve pas le chiffrement. Toutes
+les vérifications de ce lot regardent donc l'**en-tête du fichier**, jamais le
+retour du pragma.
+
+Le pilote retenu est `better-sqlite3-multiple-ciphers@13.1.1` : prébuilds
+N-API pour Windows/macOS/Linux (aucune compilation sur le poste client),
+SQLite 3.54 avec SQLite3MultipleCiphers. `server/db/driver.ts` est désormais le
+**seul** point d'ouverture de base : les 16 imports de `node:sqlite`
+(13 dépôts + `db/sqlite.ts` + `db/pendingRestore.ts`) passent par lui.
+
+Séquences SQLCipher **mesurées** dans cet environnement (documentées dans
+`driver.ts`, car trois variantes plausibles échouent) :
+
+| Objectif | Séquence qui fonctionne | Ce qui échoue |
+| --- | --- | --- |
+| Ouvrir une base chiffrée | `cipher='sqlcipher'` puis `key="x'<hex>'"` puis une **lecture réelle** | — (une mauvaise clé n'échoue qu'à la première lecture) |
+| Créer une base chiffrée | `cipher` puis `key` **avant la première écriture** | Ouvrir puis poser la clé : la base naît en clair |
+| Chiffrer une base en clair | `cipher` puis **`rekey="x'<hex>'"`** | `key` puis `rekey` → `SQLITE_NOTADB` ; `cipher_migrate` → « Rekeying failed » ; `key` seul → fichier illisible |
+| Rechiffrer / rotation | `key` (ancienne) + lecture, puis `rekey` (nouvelle) | Poser deux fois `key` → « Rekeying failed » |
+| Sauvegarder | `VACUUM INTO` sur une connexion avec `key` | — (la copie reste **chiffrée**, vérifié à l'en-tête) |
+
+### 10.3 Clés (option O1)
+
+Deux clés de 32 octets, **distinctes** : `database` et `seal`. Compromettre le
+sceau d'un manifeste n'ouvre pas la base, et une copie de base ne permet pas de
+forger un marqueur accepté.
+
+Emplacement : trousseau du système (`DepotPro` / `database-key`,
+`DepotPro` / `seal-key`). Repli fichier `0600` quand aucun trousseau ne répond,
+**toujours signalé** (`backend: 'file'` + motif) et affiché sur l'écran Système,
+pour qu'un opérateur ne croie jamais la clé protégée par l'OS quand elle ne
+l'est pas. Une clé héritée du LOT 11.1 en fichier est **migrée sans changer de
+valeur** puis le fichier est supprimé ; si trousseau et fichier divergent, le
+démarrage refuse de choisir (aucune clé n'est écrasée).
+
+### 10.4 Ce qui est prouvé par les tests
+
+`tests/lot11-chiffrement.test.ts` — **20 tests** :
+
+- la base ne contient plus la chaîne `system_meta` ni le montant écrit, et son
+  en-tête n'est plus celui de SQLite ;
+- une mauvaise clé et une base chiffrée sans clé sont refusées avec un message
+  actionnable (`MissingDatabaseKeyError`), pas « file is not a database » ;
+- une base **neuve** naît chiffrée (le trou mesuré — la première session restait
+  en clair — est couvert par un test dédié) ;
+- la conversion d'une base en clair conserve les données, produit une copie de
+  sécurité **encore lisible** (retour arrière possible) et limite à 2 le nombre
+  de copies en clair accumulées ;
+- les deux clés sont dans le trousseau, aucun fichier de clé sur disque, et les
+  noms de compte sont figés (contrat) ;
+- repli fichier 0600 quand le trousseau est absent, **et** migration vers le
+  trousseau sans changement de valeur ;
+- re-scellement : v1 intact → scellé ; fichier modifié → **jamais** scellé ;
+  fichier absent → signalé ; seconde exécution sans effet (idempotence) ;
+- rotation : la base s'ouvre avec la nouvelle clé, plus avec l'ancienne, et les
+  manifestes sont re-scellés et vérifiables ;
+- prévisualisation : `data/preview/`, dossier imposé respecté, ouverture de la
+  base de production **refusée**.
+
+### 10.5 Défaut trouvé pendant ce lot (et corrigé)
+
+Une sauvegarde de base chiffrée est elle-même chiffrée. Or la vérification
+d'intégrité des sauvegardes (`assertSqliteFileHealthy`) ouvrait le fichier
+**sans clé** : sur une installation chiffrée, l'application aurait déclaré ses
+propres sauvegardes corrompues et refusé toute restauration. Correction : la clé
+est transmise à `inspectSqliteFile`, à `assertSqliteFileHealthy`,
+à `applyPendingRestore` et au dépôt de sauvegarde (`databaseKey`). Le contrôle
+reste strict — c'est la même fonction qui refuse un fichier altéré.
+
+### 10.6 Parité Rust — état exact
+
+- `src-tauri/src/db/keys.rs` créé (trousseau + repli + migration), `keyring = 3`
+  ajouté au `Cargo.toml` ; `db/restore.rs` passe par ce module au lieu d'écrire
+  le fichier lui-même.
+- **Le chiffrement de la base n'est PAS porté côté Rust.** Le pool utilise
+  `sqlx::sqlite` (libSQLite3 sans SQLCipher) : chiffrer exigerait de basculer sur
+  `libsqlite3-sys` avec `bundled-sqlcipher` ou sur `rusqlite`, ce qui touche la
+  compilation Windows/macOS. **Aucune chaîne `cargo` n'existe dans cet
+  environnement** : cette bascule n'a donc pas été tentée et reste le premier
+  point du lot 11.6 côté desktop. Le code le dit explicitement (en-tête de
+  `keys.rs`, garde-fou de `scripts/check_rust.py`).
+- Conséquence à assumer : tant que ce portage n'est pas fait, **la coquille
+  desktop écrit une base en clair**. C'est écrit ici plutôt que masqué.
+
+### 10.7 Preuves d'exécution
+
+| Commande | Résultat |
+| --- | --- |
+| `npx tsc --noEmit` | **OK** |
+| `npx vitest run` | **18 fichiers / 104 tests — 104 réussis, 0 échec** |
+| `npx vitest run tests/lot11-chiffrement.test.ts` | **20/20** |
+| `npx vitest run tests/lot11-securite-locale.test.ts` | **17/17** |
+| `npx vite build` | **OK** |
+| `python3 scripts/check_rust.py` | **OK** — 47 fichiers, 95/95 commandes, 99 handlers |
+| `npx tsx server.ts` (aperçu) | démarre sur `data/preview/depotpro.db` ; `data/` ne contient **que** `preview/` |
+| `DEPOTPRO_DESKTOP=1 DEPOTPRO_DB_ENCRYPTION=1` | en-tête du fichier non-SQLite, `keyStorage: "os"`, **aucun** fichier `.key` dans `data/`, base + `-wal` + `-shm` en `0600` |
+| `cargo check` / `cargo test` | **toujours non exécutable ici** |
+
+### 10.8 Limites de ce lot
+
+1. **Trousseau simulé dans les tests** : la logique (choix, migration, repli,
+   rotation) est testée avec un trousseau en mémoire ; le vrai
+   `@napi-rs/keyring` a été exercé **manuellement** dans cet environnement
+   (`Entry` → `setPassword` / `getPassword` / `deletePassword`), pas dans la
+   suite automatisée.
+2. **Clé perdue = données perdues.** Il n'existe aucune récupération : c'est le
+   prix du chiffrement. La sauvegarde du trousseau n'est pas encore outillée
+   (export/import de clé, lot 11.10 à ouvrir).
+3. **Copies en clair transitoires** : la conversion laisse jusqu'à 2 copies
+   `depotpro.pre-encryption-*.db` en clair (retour arrière). Elles doivent être
+   supprimées par l'opérateur une fois la conversion validée.
+4. **Memoire (RAM) non chiffrée** : une clé SQLCipher est en clair dans le
+   processus ; une attaque par lecture mémoire n'est pas couverte.
+5. **Windows** : les ACL ne sont toujours pas durcies (le `0600` Unix est sans
+   effet) ; seul le chiffrement protège le fichier.
+6. **Rust sans chiffrement** (§10.6) : la coquille desktop reste en clair.

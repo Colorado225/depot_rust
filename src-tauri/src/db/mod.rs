@@ -12,6 +12,7 @@
 //!   4. application des migrations manquantes, chacune dans une transaction ;
 //!   5. traçage de la restauration appliquée.
 
+pub mod keys;
 pub mod restore;
 
 use crate::error::AppError;

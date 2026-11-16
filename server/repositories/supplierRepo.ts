@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import { assertNonNegativeXof } from '../domain/money.ts';
 import { AppError } from '../error.ts';
 
@@ -34,7 +34,7 @@ export interface SaveSupplierInput {
 }
 
 export class SupplierRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseLike) {}
 
   listSuppliers(filter: { search?: string; includeInactive?: boolean } = {}): SupplierDTO[] {
     const clauses: string[] = [];

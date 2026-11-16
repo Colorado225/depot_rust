@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import { assertPositiveXof, assertNonNegativeXof } from '../domain/money.ts';
 import { AppError } from '../error.ts';
 import type { PaymentMethod } from './customerRepo.ts';
@@ -162,7 +162,7 @@ export interface RecordExpenseInput {
 }
 
 export class FinanceRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseLike) {}
 
   listRegisters(): CashRegisterDTO[] {
     const rows = this.db

@@ -28,3 +28,6 @@ chrono = { version = "0.4", features = ["serde"] }
 scrypt = "0.11"
 sha2 = "0.10"
 hex = "0.4"
+# LOT 11.6 — clés dans le trousseau du système (option O1). Le repli fichier
+# 0600 reste disponible quand aucun trousseau ne répond (conteneur, CI).
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }

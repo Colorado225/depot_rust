@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import { computeWeightedAvgCostXof } from '../domain/cump.ts';
 import { assertNonNegativeXof, mulXofQty } from '../domain/money.ts';
 import { AppError } from '../error.ts';
@@ -138,7 +138,7 @@ export interface RecordSupplierReturnInput {
 }
 
 export class PurchaseRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseLike) {}
 
   private generateDocNumber(prefix: string): string {
     const rand = crypto.randomBytes(2).toString('hex').toUpperCase();

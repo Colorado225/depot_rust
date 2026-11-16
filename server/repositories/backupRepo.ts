@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import { initLocalSqlite } from '../db/sqlite.ts';
 import {
   RESTORE_CONFIRMATION,
@@ -182,7 +182,7 @@ const SNAPSHOT_TABLES = [
   'schema_migrations',
 ] as const;
 
-function countRowsSafe(db: DatabaseSync, table: string): number {
+function countRowsSafe(db: DatabaseLike, table: string): number {
   const exists = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(table);
@@ -191,7 +191,7 @@ function countRowsSafe(db: DatabaseSync, table: string): number {
   return (db.prepare(`SELECT COUNT(*) AS cnt FROM "${safe}"`).get() as { cnt: number }).cnt;
 }
 
-function snapshotRows(db: DatabaseSync): Record<string, number> {
+function snapshotRows(db: DatabaseLike): Record<string, number> {
   const out: Record<string, number> = {};
   for (const table of SNAPSHOT_TABLES) {
     out[table] = countRowsSafe(db, table);
@@ -217,19 +217,36 @@ function safeOriginalName(raw: string): string {
 }
 
 export class BackupRepository {
+  /** Chemin de la base : nécessaire au scellement et aux outils de maintenance. */
+  readonly dbPath: string;
+  /** Connexion : les outils de maintenance écrivent leur audit par ce biais. */
+  readonly db: DatabaseLike;
+  /** Clé SQLCipher des fichiers de sauvegarde (`null` en base non chiffrée). */
+  private readonly databaseKey: { hex: string } | null;
   private readonly backupsDir: string;
   private readonly restoreDir: string;
   private readonly migrationsDir: string;
 
   constructor(
-    private readonly db: DatabaseSync,
-    private readonly dbPath: string,
+    db: DatabaseLike,
+    dbPath: string,
     options: {
       backupsDir?: string;
       restoreDir?: string;
       migrationsDir?: string;
+      /**
+       * LOT 11.6 — clé SQLCipher de la base.
+       * Indispensable quand la base est chiffrée : `VACUUM INTO` produit alors
+       * une sauvegarde CHIFFRÉE, et tout contrôle d'intégrité qui l'ouvre sans
+       * clé la déclarerait corrompue — l'application refuserait ses propres
+       * sauvegardes.
+       */
+      databaseKey?: { hex: string } | null;
     } = {}
   ) {
+    this.db = db;
+    this.dbPath = dbPath;
+    this.databaseKey = options.databaseKey ?? null;
     const dataDir = path.dirname(path.resolve(dbPath));
     this.backupsDir = path.resolve(options.backupsDir ?? path.join(dataDir, 'backups'));
     this.restoreDir = path.resolve(options.restoreDir ?? path.join(dataDir, 'restore'));
@@ -241,6 +258,11 @@ export class BackupRepository {
   // ---------------------------------------------------------------------------
   // Manifestes de sauvegarde (contrôle hors ligne, sans ouvrir l'application)
   // ---------------------------------------------------------------------------
+
+  /** Dossier des sauvegardes (utilisé par les outils de maintenance du LOT 11.6). */
+  get backupsDirectory(): string {
+    return this.backupsDir;
+  }
 
   private currentLot(): string {
     const row = this.db
@@ -551,7 +573,7 @@ export class BackupRepository {
       // VACUUM INTO produit une copie compactée et transactionnellement cohérente,
       // y compris les frames WAL validés : c'est la méthode recommandée pour WAL.
       this.db.prepare('VACUUM INTO ?').run(tmpPath);
-      assertSqliteFileHealthy(tmpPath);
+      assertSqliteFileHealthy(tmpPath, { key: this.databaseKey });
       size = fs.statSync(tmpPath).size;
       checksum = sha256FileSync(tmpPath);
       fs.renameSync(tmpPath, finalPath);
@@ -687,7 +709,7 @@ export class BackupRepository {
     try {
       if (!entry.fileExists) throw new Error('Fichier de sauvegarde absent du disque');
       checksumComputed = sha256FileSync(entry.filePath);
-      const inspection = assertSqliteFileHealthy(entry.filePath);
+      const inspection = assertSqliteFileHealthy(entry.filePath, { key: this.databaseKey });
       integrityResult = inspection.integrityResult;
       foreignKeyViolations = inspection.foreignKeyViolations;
       requiredTablesPresent = inspection.hasMigrationsTable;
@@ -845,7 +867,7 @@ export class BackupRepository {
           400
         );
       }
-      const inspection = assertSqliteFileHealthy(tmpPath);
+      const inspection = assertSqliteFileHealthy(tmpPath, { key: this.databaseKey });
       integrityResult = inspection.integrityResult;
       foreignKeyViolations = inspection.foreignKeyViolations;
       size = fs.statSync(tmpPath).size;
@@ -956,9 +978,13 @@ export class BackupRepository {
     const rowsBefore = snapshotRows(this.db);
     let rowsAfter: Record<string, number> = {};
     let migrationsAppliedOnStaged = 0;
-    let stagedDb: DatabaseSync | null = null;
+    let stagedDb: DatabaseLike | null = null;
     try {
-      const staged = initLocalSqlite(stagedPath, this.migrationsDir);
+      const staged = initLocalSqlite(stagedPath, this.migrationsDir, {
+        encryption: Boolean(this.databaseKey),
+        databaseKey: this.databaseKey,
+        dataDir: this.restoreDir,
+      });
       stagedDb = staged.db;
       migrationsAppliedOnStaged = staged.migrationsAppliedNow;
       rowsAfter = snapshotRows(staged.db);
@@ -993,7 +1019,7 @@ export class BackupRepository {
       );
     }
 
-    assertSqliteFileHealthy(stagedPath);
+    assertSqliteFileHealthy(stagedPath, { key: this.databaseKey });
     const stagedChecksum = sha256FileSync(stagedPath);
 
     const activateOnRestart = input.activateOnRestart !== false;

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import { AppError } from '../error.ts';
 import { assertNonNegativeXof } from '../domain/money.ts';
 
@@ -36,7 +36,7 @@ export interface UpdateBusinessSettingsInput {
 }
 
 export class SettingsRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseLike) {}
 
   getSettings(): BusinessSettingsDTO {
     const row = this.db

@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import fs from 'node:fs';
 import { AppError } from '../error.ts';
 import { addXof, mulXofQty, subXof } from '../domain/money.ts';
@@ -17,6 +17,16 @@ export interface SystemHealthDTO {
   currentLot: string;
   offlineReady: boolean;
   checkedAt: string;
+  /** LOT 11.6 — chiffrement au repos de la base locale. */
+  databaseEncryption: DatabaseEncryptionHealth;
+}
+
+export interface DatabaseEncryptionHealth {
+  encrypted: boolean;
+  /** `os` (trousseau), `file` (repli 0600) ou `none` (base en clair). */
+  keyStorage: 'os' | 'file' | 'none';
+  /** Motif du repli, `null` quand tout est nominal. */
+  note: string | null;
 }
 
 export interface MigrationRecordDTO {
@@ -76,8 +86,13 @@ export interface SelfTestReportDTO {
 
 export class SystemRepository {
   constructor(
-    private readonly db: DatabaseSync,
-    private readonly dbPath: string
+    private readonly db: DatabaseLike,
+    private readonly dbPath: string,
+    private readonly encryption: DatabaseEncryptionHealth = {
+      encrypted: false,
+      keyStorage: 'none',
+      note: 'chiffrement au repos non activé sur ce processus (prévisualisation).',
+    }
   ) {}
 
   getHealth(): SystemHealthDTO {
@@ -113,6 +128,7 @@ export class SystemRepository {
       currentLot: lotRow?.value ?? 'LOT_0',
       offlineReady: true,
       checkedAt: new Date().toISOString(),
+      databaseEncryption: this.encryption,
     };
   }
 

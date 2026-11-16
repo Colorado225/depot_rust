@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseLike } from '../db/driver.ts';
 import { mulXofQty } from '../domain/money.ts';
 import { AppError } from '../error.ts';
 import type { PaymentMethod } from './customerRepo.ts';
@@ -96,7 +96,7 @@ export interface DepotPackagingOperationInput {
 }
 
 export class ConsignmentRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseLike) {}
 
   private generatePaymentNumber(): string {
     const rand = crypto.randomBytes(2).toString('hex').toUpperCase();
